@@ -1,0 +1,303 @@
+﻿:root {
+  --bg: #eef5ff;
+  --panel: #ffffff;
+  --line: #c5d5eb;
+  --ink: #1d2a3a;
+  --muted: #54657a;
+  --brand: #0056a6;
+  --brand-strong: #003f7a;
+  --warn: #8f5f00;
+  --error: #b42318;
+}
+
+.page {
+  padding: 22px 14px 36px;
+}
+
+.panel {
+  max-width: 1060px;
+  margin: 0 auto;
+  display: grid;
+  gap: 14px;
+}
+
+.head {
+  background: linear-gradient(120deg, #dcecff, #f6f9ff);
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  padding: 18px;
+}
+
+.head h1 {
+  margin: 0;
+  font-size: 1.8rem;
+}
+
+.head p {
+  margin: 8px 0 0;
+  color: var(--muted);
+}
+
+.card {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 16px;
+  box-shadow: 0 8px 22px rgba(14, 52, 97, 0.08);
+}
+
+.title-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 10px;
+}
+
+.actions-row {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+h2 {
+  margin: 0 0 10px;
+  font-size: 1.2rem;
+}
+
+h3 {
+  margin: 12px 0 8px;
+  font-size: 1rem;
+}
+
+.field {
+  display: grid;
+  gap: 6px;
+  margin-bottom: 12px;
+}
+
+.field span {
+  font-weight: 600;
+  font-size: 0.92rem;
+}
+
+.row.two {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+}
+
+.check {
+  display: flex;
+  align-items: end;
+  grid-template-columns: auto 1fr;
+  gap: 8px;
+}
+
+input,
+textarea {
+  width: 100%;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 10px;
+  font: inherit;
+}
+
+textarea {
+  resize: vertical;
+}
+
+button {
+  border: 0;
+  border-radius: 8px;
+  padding: 10px 14px;
+  background: var(--brand);
+  color: #fff;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+button:hover:not(:disabled) {
+  background: var(--brand-strong);
+}
+
+button:disabled {
+  opacity: 0.65;
+  cursor: wait;
+}
+
+button.secondary {
+  background: #e3edf9;
+  color: #123254;
+  padding: 6px 10px;
+  font-weight: 600;
+}
+
+button.secondary:hover:not(:disabled) {
+  background: #d5e4f5;
+}
+
+.button-link {
+  border: 0;
+  border-radius: 8px;
+  padding: 8px 12px;
+  background: #e3edf9;
+  color: #123254;
+  font-weight: 600;
+  text-decoration: none;
+  display: inline-flex;
+  align-items: center;
+}
+
+.button-link:hover {
+  background: #d5e4f5;
+}
+
+.summary {
+  color: var(--muted);
+  margin-bottom: 8px;
+}
+
+.warn {
+  color: var(--warn);
+  font-weight: 600;
+  margin: 0 0 10px;
+}
+
+.status {
+  display: inline-flex;
+  align-items: center;
+  border-radius: 999px;
+  padding: 2px 8px;
+  font-size: 0.78rem;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+
+.status.queued {
+  background: #e5ebf4;
+  color: #3e5673;
+}
+
+.status.running {
+  background: #dbeafe;
+  color: #1e40af;
+}
+
+.status.done {
+  background: #dcfce7;
+  color: #166534;
+}
+
+.status.error {
+  background: #fee2e2;
+  color: #991b1b;
+}
+
+.jobs-list {
+  display: grid;
+  gap: 8px;
+}
+
+.review-list {
+  display: grid;
+  gap: 10px;
+}
+
+.review-item {
+  border: 1px solid #d8e4f2;
+  border-radius: 8px;
+  padding: 10px;
+  background: #f9fbff;
+}
+
+.review-top {
+  display: flex;
+  gap: 10px;
+  align-items: start;
+}
+
+.review-answer {
+  margin: 8px 0;
+  color: #334155;
+}
+
+.review-meta {
+  margin: 0;
+}
+
+.job-item {
+  background: #f6faff;
+  border: 1px solid #d8e4f2;
+  border-radius: 8px;
+  color: var(--ink);
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  gap: 8px;
+  text-align: left;
+  align-items: center;
+}
+
+.job-item.active {
+  border-color: var(--brand);
+  box-shadow: 0 0 0 2px rgba(0, 86, 166, 0.15);
+}
+
+.progress-wrap {
+  height: 10px;
+  width: 100%;
+  border-radius: 999px;
+  background: #e8eff8;
+  overflow: hidden;
+  margin-bottom: 10px;
+}
+
+.progress-bar {
+  height: 100%;
+  background: linear-gradient(90deg, #2f80ed, #0b57d0);
+  transition: width 0.2s ease;
+}
+
+.grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+pre {
+  margin: 0;
+  background: #f4f8fe;
+  border: 1px solid #d8e4f2;
+  border-radius: 8px;
+  padding: 10px;
+  font-size: 0.84rem;
+  max-height: 260px;
+  overflow: auto;
+  white-space: pre-wrap;
+}
+
+.mono {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 0.9rem;
+}
+
+.error {
+  color: var(--error);
+  font-weight: 600;
+  margin: 10px 0 0;
+}
+
+@media (max-width: 860px) {
+  .row.two,
+  .grid {
+    grid-template-columns: 1fr;
+  }
+
+  .job-item {
+    grid-template-columns: 1fr;
+  }
+
+  .title-row {
+    align-items: start;
+    flex-direction: column;
+  }
+}
