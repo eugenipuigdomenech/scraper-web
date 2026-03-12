@@ -84,6 +84,14 @@ class HtmlExportResponse(BaseModel):
     html_text: str
 
 
+class SourceHtmlExportResponse(BaseModel):
+    input_mode: Literal["csv", "sheets_oauth"]
+    total_rows: int
+    approved_rows: int
+    topics: int
+    html_text: str
+
+
 class SheetsExportRequest(BaseModel):
     spreadsheet_title: str = Field(min_length=1)
     worksheet_name: str = Field(min_length=1)

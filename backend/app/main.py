@@ -2,8 +2,9 @@
 import sys
 import csv
 import io
+import tempfile
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 
@@ -23,6 +24,7 @@ from app.schemas import (
     ReviewListResponse,
     ReviewUpdateResponse,
     ScrapeJobRequest,
+    SourceHtmlExportResponse,
     SheetsExportRequest,
     SheetsExportResponse,
 )
@@ -35,8 +37,10 @@ if str(SRC_DIR) not in sys.path:
 
 PIPELINE_IMPORT_ERROR = None
 run_pipeline = None
+run_approved_to_html_pipeline = None
 try:
     from scraper.pipeline import run_pipeline
+    from scraper.pipeline import run_approved_to_html_pipeline
 except Exception as exc:
     PIPELINE_IMPORT_ERROR = str(exc)
 
@@ -197,6 +201,67 @@ def export_job_review_to_html(job_id: str):
 
     html_text = approved_rows_to_html(approved_rows_compact)
     return {"job_id": job_id, "approved_rows": len(approved_rows_compact), "html_text": html_text}
+
+
+@app.post("/api/export/html-from-source", response_model=SourceHtmlExportResponse)
+async def export_html_from_source(
+    input_mode: str = Form(...),
+    csv_file: UploadFile | None = File(default=None),
+    spreadsheet_title: str | None = Form(default=None),
+    worksheet_name: str | None = Form(default=None),
+    oauth_client_json: str = Form(default="oauth_client.json"),
+    token_file: str = Form(default="token.json"),
+):
+    if run_approved_to_html_pipeline is None:
+        raise HTTPException(status_code=500, detail=PIPELINE_IMPORT_ERROR or "Pipeline not available")
+
+    mode = (input_mode or "").strip()
+    if mode not in {"csv", "sheets_oauth"}:
+        raise HTTPException(status_code=400, detail="input_mode ha de ser 'csv' o 'sheets_oauth'.")
+
+    temp_path = None
+    try:
+        if mode == "csv":
+            if csv_file is None:
+                raise HTTPException(status_code=400, detail="Falta adjuntar el fitxer CSV.")
+
+            suffix = Path(csv_file.filename or "input.csv").suffix or ".csv"
+            with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as temp_file:
+                temp_path = temp_file.name
+                temp_file.write(await csv_file.read())
+
+            result = run_approved_to_html_pipeline(
+                input_mode="csv",
+                input_csv_path=temp_path,
+                oauth_client_json=oauth_client_json,
+                token_file=token_file,
+            )
+        else:
+            if not (spreadsheet_title or "").strip() or not (worksheet_name or "").strip():
+                raise HTTPException(status_code=400, detail="Cal indicar el títol i la pestanya del Google Sheet.")
+
+            result = run_approved_to_html_pipeline(
+                input_mode="sheets_oauth",
+                sheet_title=(spreadsheet_title or "").strip(),
+                sheet_tab=(worksheet_name or "").strip(),
+                oauth_client_json=oauth_client_json,
+                token_file=token_file,
+            )
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    finally:
+        if temp_path:
+            Path(temp_path).unlink(missing_ok=True)
+
+    return {
+        "input_mode": mode,
+        "total_rows": result["total_rows"],
+        "approved_rows": result["approved_rows"],
+        "topics": result["topics"],
+        "html_text": result["html_text"],
+    }
 
 
 @app.get("/api/jobs/{job_id}/export/csv")
