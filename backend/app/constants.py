@@ -1,5 +1,6 @@
 SHEETS_COLUMNS = [
     "Tema",
+    "Subtopic",
     "Pregunta",
     "Resposta",
     "Estat",

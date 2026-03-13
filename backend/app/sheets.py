@@ -1,6 +1,7 @@
-import re
 import os
+import re
 from datetime import datetime
+from pathlib import Path
 from typing import Dict, List
 from bs4 import BeautifulSoup, NavigableString
 
@@ -17,19 +18,8 @@ except ImportError:
 
 
 def get_oauth_client(oauth_client_json="oauth_client.json", token_file="token.json"):
-    def _resolve_token_path(path: str) -> str:
-        p = (path or "").strip() or "token.json"
-        if os.path.isabs(p):
-            return p
-        appdata = os.getenv("APPDATA")
-        if appdata:
-            base_dir = os.path.join(appdata, "UPCFAQScraper")
-        else:
-            base_dir = os.path.join(os.path.expanduser("~"), ".upc_faq_scraper")
-        os.makedirs(base_dir, exist_ok=True)
-        return os.path.join(base_dir, p)
-
-    token_file = _resolve_token_path(token_file)
+    token_file = resolve_token_path(token_file)
+    oauth_client_config = resolve_oauth_client_config(oauth_client_json)
     creds = None
     try:
         if os.path.exists(token_file):
@@ -47,7 +37,7 @@ def get_oauth_client(oauth_client_json="oauth_client.json", token_file="token.js
 
     if not creds or not creds.valid:
         try:
-            flow = InstalledAppFlow.from_client_secrets_file(oauth_client_json, OAUTH_SCOPES)
+            flow = InstalledAppFlow.from_client_config(oauth_client_config, OAUTH_SCOPES)
             creds = flow.run_local_server(port=0)
             with open(token_file, "w", encoding="utf-8") as f:
                 f.write(creds.to_json())
@@ -55,6 +45,112 @@ def get_oauth_client(oauth_client_json="oauth_client.json", token_file="token.js
             raise RuntimeError(f"OAuth error: {_format_google_error(e)}") from e
 
     return gspread.authorize(creds)
+
+
+def resolve_oauth_client_config(path: str = "oauth_client.json") -> dict:
+    client_id = (os.getenv("GOOGLE_OAUTH_CLIENT_ID") or "").strip()
+    client_secret = (os.getenv("GOOGLE_OAUTH_CLIENT_SECRET") or "").strip()
+    project_id = (os.getenv("GOOGLE_OAUTH_PROJECT_ID") or "").strip()
+
+    if client_id and client_secret:
+        return {
+            "installed": {
+                "client_id": client_id,
+                "project_id": project_id or "upc-faq-manager",
+                "auth_uri": "https://accounts.google.com/o/oauth2/auth",
+                "token_uri": "https://oauth2.googleapis.com/token",
+                "auth_provider_x509_cert_url": "https://www.googleapis.com/oauth2/v1/certs",
+                "client_secret": client_secret,
+                "redirect_uris": ["http://localhost"],
+            }
+        }
+
+    oauth_path = resolve_oauth_client_path(path)
+    import json
+
+    with open(oauth_path, "r", encoding="utf-8") as handle:
+        return json.load(handle)
+
+
+def resolve_oauth_client_path(path: str) -> str:
+    candidate = (path or "").strip() or "oauth_client.json"
+    raw = Path(candidate)
+    if raw.is_absolute():
+        if raw.exists():
+            return str(raw)
+        raise RuntimeError(f"No s'ha trobat el fitxer OAuth: {raw}")
+
+    base_dir = Path(__file__).resolve().parents[2]
+    sibling_scraper_dir = base_dir.parent / "Scraper"
+    search_paths = [
+        Path.cwd() / candidate,
+        base_dir / candidate,
+        base_dir / "backend" / candidate,
+        base_dir / "backend" / "app" / candidate,
+        base_dir / "tests" / candidate,
+        sibling_scraper_dir / candidate,
+        sibling_scraper_dir / "tests" / candidate,
+    ]
+    for item in search_paths:
+        if item.exists():
+            return str(item.resolve())
+
+    searched = " | ".join(str(item) for item in search_paths)
+    raise RuntimeError(
+        f"No s'ha trobat el fitxer OAuth '{candidate}'. Rutes comprovades: {searched}"
+    )
+
+
+def resolve_token_path(path: str) -> str:
+    p = (path or "").strip() or "token.json"
+    if os.path.isabs(p):
+        return p
+    appdata = os.getenv("APPDATA")
+    if appdata:
+        base_dir = os.path.join(appdata, "UPCFAQScraper")
+    else:
+        base_dir = os.path.join(os.path.expanduser("~"), ".upc_faq_scraper")
+    os.makedirs(base_dir, exist_ok=True)
+    return os.path.join(base_dir, p)
+
+
+def get_google_session_status(
+    token_file: str = "token.json",
+    oauth_client_json: str = "oauth_client.json",
+) -> dict[str, str | bool | None]:
+    resolved = resolve_token_path(token_file)
+    connected = os.path.exists(resolved) and os.path.getsize(resolved) > 0
+    env_configured = bool((os.getenv("GOOGLE_OAUTH_CLIENT_ID") or "").strip() and (os.getenv("GOOGLE_OAUTH_CLIENT_SECRET") or "").strip())
+    try:
+        oauth_path = "env:GOOGLE_OAUTH_CLIENT_ID/SECRET" if env_configured else resolve_oauth_client_path(oauth_client_json)
+        oauth_found = True
+    except Exception:
+        oauth_path = str(Path.cwd() / ((oauth_client_json or "").strip() or "oauth_client.json"))
+        oauth_found = False
+    return {
+        "connected": connected,
+        "token_file": resolved,
+        "account_hint": os.path.basename(resolved) if connected else None,
+        "oauth_client_json": oauth_path,
+        "oauth_client_found": oauth_found,
+    }
+
+
+def logout_google_session(token_file: str = "token.json") -> dict[str, str | bool | None]:
+    resolved = resolve_token_path(token_file)
+    if os.path.exists(resolved):
+        os.remove(resolved)
+    return get_google_session_status(token_file)
+
+
+def list_spreadsheets_oauth(
+    oauth_client_json: str = "oauth_client.json",
+    token_file: str = "token.json",
+) -> list[str]:
+    client = get_oauth_client(oauth_client_json=oauth_client_json, token_file=token_file)
+    files = client.list_spreadsheet_files()
+    titles = sorted({(item.get("name") or "").strip() for item in files if (item.get("name") or "").strip()})
+    return titles
 
 
 def _format_google_error(e: Exception) -> str:
@@ -160,12 +256,12 @@ def export_rows_to_google_sheets_oauth(
 
     def _qkey(row: List[str]) -> tuple[str, str, str]:
         topic = _norm(row[0]) if len(row) > 0 else ""
-        pregunta = _norm(row[1]) if len(row) > 1 else ""
-        font = _norm(row[8]) if len(row) > 8 else ""
+        pregunta = _norm(row[2]) if len(row) > 2 else ""
+        font = _norm(row[9]) if len(row) > 9 else ""
         return (topic, pregunta, font)
 
     def _ans(row: List[str]) -> str:
-        return _norm(row[2]) if len(row) > 2 else ""
+        return _norm(row[3]) if len(row) > 3 else ""
 
     def _html_to_sheet_text(value: str) -> str:
         text = (value or "").strip()
@@ -249,7 +345,7 @@ def export_rows_to_google_sheets_oauth(
 
     for r in values[1:]:
         k = _qkey(r)
-        created = (r[4] if len(r) > 4 else "").strip()
+        created = (r[5] if len(r) > 5 else "").strip()
         if created and k not in first_created:
             first_created[k] = created
 
@@ -263,13 +359,13 @@ def export_rows_to_google_sheets_oauth(
 
     for r in rows:
         rr = r.copy()
-        if len(rr) > 2:
-            rr[2] = _html_to_sheet_text(rr[2])
+        if len(rr) > 3:
+            rr[3] = _html_to_sheet_text(rr[3])
         k = _qkey(rr)
         a = _ans(rr)
 
-        rr[4] = first_created.get(k, rr[4] or now_ts)
-        rr[5] = now_ts
+        rr[5] = first_created.get(k, rr[5] or now_ts)
+        rr[6] = now_ts
 
         seen = existing_answers.setdefault(k, set())
         if a in seen:
@@ -277,7 +373,7 @@ def export_rows_to_google_sheets_oauth(
             continue
 
         seen.add(a)
-        first_created.setdefault(k, rr[4])
+        first_created.setdefault(k, rr[5])
         to_append.append(rr)
 
     _log(f"Saltades (mateixa resposta): {skipped} | Noves (resposta diferent): {len(to_append)}")

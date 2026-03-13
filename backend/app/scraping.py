@@ -296,6 +296,7 @@ def build_outputs(
                 out_rows.append(
                     [
                         topic,
+                        "",
                         pregunta.strip(),
                         resposta.strip(),
                         estat_default,

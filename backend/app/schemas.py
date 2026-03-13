@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 from typing import Literal
 
@@ -7,7 +7,7 @@ from pydantic import BaseModel, Field
 
 class SourceIn(BaseModel):
     url: str = Field(min_length=1, max_length=2048)
-    topic: str = ""
+    topic: str = Field(default="", max_length=200)
 
 
 class ScrapeJobRequest(BaseModel):
@@ -45,11 +45,16 @@ class JobResultResponse(BaseModel):
 class ReviewItemResponse(BaseModel):
     id: str
     topic: str
+    subtopic: str
     question: str
     answer: str
     source: str
     status: Literal["Pendent", "Aprovat"]
     approved: bool
+    created_at: str
+    updated_at: str
+    last_modified_by: str
+    annual_update: str
 
 
 class ReviewListResponse(BaseModel):
@@ -61,7 +66,14 @@ class ReviewListResponse(BaseModel):
 
 
 class ReviewItemUpdateRequest(BaseModel):
-    approved: bool
+    approved: bool | None = None
+    topic: str | None = Field(default=None, max_length=200)
+    subtopic: str | None = Field(default=None, max_length=200)
+    question: str | None = None
+    answer: str | None = None
+    source: str | None = Field(default=None, max_length=2048)
+    annual_update: str | None = Field(default=None, max_length=200)
+    last_modified_by: str | None = Field(default=None, max_length=200)
 
 
 class ReviewBulkUpdateRequest(BaseModel):
@@ -82,13 +94,14 @@ class HtmlExportResponse(BaseModel):
     job_id: str
     approved_rows: int
     html_text: str
+    groups: int
 
 
 class SourceHtmlExportResponse(BaseModel):
     input_mode: Literal["csv", "sheets_oauth"]
     total_rows: int
     approved_rows: int
-    topics: int
+    groups: int
     html_text: str
 
 
@@ -104,3 +117,15 @@ class SheetsExportResponse(BaseModel):
     approved_rows: int
     spreadsheet_title: str
     worksheet_name: str
+
+
+class GoogleSessionResponse(BaseModel):
+    connected: bool
+    token_file: str
+    account_hint: str | None = None
+    oauth_client_json: str | None = None
+    oauth_client_found: bool | None = None
+
+
+class GoogleSheetsListResponse(BaseModel):
+    spreadsheets: list[str]

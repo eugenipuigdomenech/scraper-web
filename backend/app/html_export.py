@@ -1,178 +1,189 @@
+from __future__ import annotations
+
 import html
-from typing import Dict, List
+import re
+from collections import OrderedDict
+from typing import Any
+
 from bs4 import BeautifulSoup
 
 
-def filter_approved(rows: List[Dict[str, str]]) -> List[Dict[str, str]]:
-    approved_values = {"aprobat", "aprovada", "approved"}
-    out = []
-    for r in rows:
-        estat = (r.get("Estat") or r.get("estat") or "").strip().lower()
-        if estat in approved_values:
-            out.append(r)
-    return out
+APPROVED_VALUES = {"aprovat", "aprovada", "approved"}
+
+
+def _clean_text(value: Any) -> str:
+    return str(value or "").strip()
 
 
 def _looks_like_html(text: str) -> bool:
-    t = (text or "").strip()
+    t = _clean_text(text)
     return "<" in t and ">" in t
 
 
+def _answer_to_html(answer: str) -> str:
+    if _looks_like_html(answer):
+        return answer.strip()
+
+    escaped = html.escape(_clean_text(answer))
+    escaped = escaped.replace("\r\n", "\n").replace("\r", "\n")
+    escaped = escaped.replace("\n\n", "<br /><br />")
+    return escaped.replace("\n", "<br />")
+
+
 def _answer_to_html_paragraph(answer: str) -> str:
-    a = (answer or "").strip()
-    if _looks_like_html(a):
-        return a
-
-    a = html.escape(a)
-    a = a.replace("\r\n", "\n").replace("\r", "\n")
-    a = a.replace("\n\n", "<br /><br />")
-    a = a.replace("\n", "<br />")
-    return a
+    return _answer_to_html(answer)
 
 
-def render_upc_faqaccordion(items: List[Dict[str, str]]) -> str:
-    out: List[str] = []
-    out.append('<div id="faqAccordion" style="margin-bottom: 40px;">')
+def _slugify(value: str) -> str:
+    slug = re.sub(r"[^a-z0-9]+", "-", _clean_text(value).lower()).strip("-")
+    return slug or "bloc"
 
-    for idx, it in enumerate(items, start=1):
-        q = (it.get("Pregunta") or "").strip()
-        a = (it.get("Resposta") or "").strip()
 
-        q_html = q if _looks_like_html(q) else html.escape(q)
-        a_html = _answer_to_html_paragraph(a)
+def filter_approved(rows: list[dict[str, str]]) -> list[dict[str, str]]:
+    out = []
+    for row in rows:
+        status = _clean_text(row.get("Estat") or row.get("estat")).lower()
+        if status in APPROVED_VALUES:
+            out.append(row)
+    return out
 
-        out.append(f"<!-- ITEM {idx} -->")
-        out.append('<div style="border: 0; box-shadow: none; border-bottom: 1px solid #D1D1D1; background: transparent;">')
-        out.append(
-            '<h2 style="padding: 0; margin: 0;">'
-            f'<button type="button" data-bs-toggle="collapse" data-bs-target="#c{idx}" aria-expanded="false" aria-controls="c{idx}" '
-            'style="width: 100%; text-align: left; font-size: 18px; background: transparent; padding: 30px 36px 30px 18px; '
-            'font-weight: 500; color: #00769d; position: relative; border: 0; border-top: 1px solid #D1D1D1; '
-            'box-shadow: none; cursor: pointer;">'
-            f"{q_html} "
-            '<span aria-hidden="true" style="position: absolute; right: 18px; top: 50%; transform: translateY(-50%); '
-            'font-size: 22px; line-height: 1; color: #00769D; transition: all .25s ease;">&#8964;</span> '
-            "</button></h2>"
-        )
-        out.append(
-            f'<div id="c{idx}" class="collapse" data-bs-parent="#faqAccordion" '
-            'style="border-bottom: 1px solid #D1D1D1; margin-bottom: -1px; position: relative; z-index: 1; height: 0px; overflow: hidden; '
-            'transition: height 350ms ease;">'
-        )
-        out.append('<div style="border-top: 0; padding: 0 18px 18px;">')
-        out.append(
-            '<div style="margin: 0; font-size: 16px; font-weight: 300; line-height: 1.45; color: #636363;">'
-            f"{a_html}</div>"
-        )
-        out.append("</div></div></div>")
 
-    out.append("</div>")
-    out.append("<p>")
-    out.append("<script>")
-    out.append(
-        r"""(function () {
-  const acc = document.getElementById('faqAccordion');
-  if (!acc) return;
-
-  const collapses = Array.from(acc.querySelectorAll('.collapse'));
-
-  function btnFor(col) {
-    return acc.querySelector('[data-bs-target="#' + col.id + '"]');
-  }
-
-  function setStyles(col, isOpen) {
-    const btn = btnFor(col);
-    if (btn) {
-      btn.style.borderTopColor = isOpen ? '#00769D' : '#D1D1D1';
-      btn.setAttribute('aria-expanded', isOpen ? 'true' : 'false');
-      const icon = btn.querySelector('span[aria-hidden="true"]');
-      if (icon) {
-        icon.textContent = isOpen ? '\u2303' : '\u2304';
-        icon.style.transform = 'translateY(-50%)';
-      }
+def normalize_row_dict(row: dict[str, Any]) -> dict[str, str]:
+    return {
+        "Tema": _clean_text(row.get("Tema") or row.get("topic") or row.get("Topic")),
+        "Subtopic": _clean_text(row.get("Subtopic") or row.get("subtopic") or row.get("Subtòpic")),
+        "Pregunta": _clean_text(row.get("Pregunta") or row.get("question") or row.get("Question")),
+        "Resposta": _clean_text(row.get("Resposta") or row.get("answer") or row.get("Answer")),
+        "Estat": _clean_text(row.get("Estat") or row.get("status") or row.get("Status")),
+        "Data creació": _clean_text(row.get("Data creació") or row.get("created_at")),
+        "Darrera modificació": _clean_text(row.get("Darrera modificació") or row.get("updated_at")),
+        "Persona darrera modificació": _clean_text(
+            row.get("Persona darrera modificació") or row.get("last_modified_by")
+        ),
+        "Dades amb actualització anual": _clean_text(
+            row.get("Dades amb actualització anual") or row.get("annual_update")
+        ),
+        "Font": _clean_text(row.get("Font") or row.get("source") or row.get("URL")),
     }
-    col.style.borderBottomColor = isOpen ? '#00769D' : '#D1D1D1';
-  }
 
-  function open(col) {
-    if (col.dataset.anim === '1') return;
 
-    collapses.forEach(other => { if (other !== col) close(other); });
+def approved_rows_to_records(rows: list[list[Any]]) -> list[dict[str, str]]:
+    records = []
+    for row in rows:
+        normalized = normalize_row_dict(
+            {
+                "Tema": row[0] if len(row) > 0 else "",
+                "Subtopic": row[1] if len(row) > 1 else "",
+                "Pregunta": row[2] if len(row) > 2 else "",
+                "Resposta": row[3] if len(row) > 3 else "",
+                "Estat": row[4] if len(row) > 4 else "Aprovat",
+                "Data creació": row[5] if len(row) > 5 else "",
+                "Darrera modificació": row[6] if len(row) > 6 else "",
+                "Persona darrera modificació": row[7] if len(row) > 7 else "",
+                "Dades amb actualització anual": row[8] if len(row) > 8 else "",
+                "Font": row[9] if len(row) > 9 else "",
+            }
+        )
+        records.append(normalized)
+    return records
 
-    col.dataset.anim = '1';
-    col.classList.add('showing');
-    col.style.height = '0px';
 
-    requestAnimationFrame(() => {
-      const h = col.scrollHeight;
-      col.style.height = h + 'px';
-      setStyles(col, true);
-    });
+def apply_default_subtopics(rows: list[dict[str, str]], default_value: str = "-") -> list[dict[str, str]]:
+    normalized_rows: list[dict[str, str]] = []
+    for row in rows:
+        normalized = dict(row)
+        if not _clean_text(normalized.get("Subtopic")):
+            normalized["Subtopic"] = default_value
+        normalized_rows.append(normalized)
+    return normalized_rows
 
-    const done = (e) => {
-      if (e.propertyName !== 'height') return;
-      col.classList.remove('showing');
-      col.classList.add('show');
-      col.style.height = 'auto';
-      col.dataset.anim = '0';
-      col.removeEventListener('transitionend', done);
-    };
-    col.addEventListener('transitionend', done);
-  }
 
-  function close(col) {
-    if (col.dataset.anim === '1') return;
-    if (!col.classList.contains('show') && col.style.height === '0px') return;
+def validate_subtopics(rows: list[dict[str, str]], require_for_approved: bool = True) -> None:
+    for index, row in enumerate(rows, start=1):
+        topic = _clean_text(row.get("Tema"))
+        question = _clean_text(row.get("Pregunta"))
+        answer = _clean_text(row.get("Resposta"))
+        if not topic or not question or not answer:
+            raise ValueError(f"La fila aprovada {index} té camps obligatoris buits.")
 
-    col.dataset.anim = '1';
-    col.classList.remove('show');
 
-    const h = col.scrollHeight;
-    col.style.height = h + 'px';
 
-    requestAnimationFrame(() => {
-      col.style.height = '0px';
-      setStyles(col, false);
-    });
+def render_genweb_accordion(rows: list[dict[str, str]]) -> tuple[str, int]:
+    groups: "OrderedDict[str, list[dict[str, str]]]" = OrderedDict()
+    for row in rows:
+        topic = _clean_text(row.get("Tema"))
+        subtopic = _clean_text(row.get("Subtopic"))
+        group_label = subtopic or topic or "General"
+        groups.setdefault(group_label, []).append(row)
 
-    const done = (e) => {
-      if (e.propertyName !== 'height') return;
-      col.dataset.anim = '0';
-      col.removeEventListener('transitionend', done);
-    };
-    col.addEventListener('transitionend', done);
-  }
+    html_parts = ['<div class="upc-faq-export" data-upc-faq-export="true">']
 
-  acc.querySelectorAll('button[data-bs-target]').forEach(btn => {
-    btn.addEventListener('click', (e) => {
-      e.preventDefault();
-      const sel = btn.getAttribute('data-bs-target');
-      const col = sel ? document.querySelector(sel) : null;
-      if (!col) return;
+    for group_index, (group_name, items) in enumerate(groups.items(), start=1):
+        group_slug = _slugify(f"group-{group_index}-{group_name}")
+        html_parts.append(f'<section class="faq-group" data-group="{html.escape(group_slug)}">')
+        html_parts.append(f"<h3>{html.escape(group_name)}</h3>")
+        html_parts.append(f'<div class="faq-accordion" id="{html.escape(group_slug)}">')
 
-      const isOpen = col.classList.contains('show') || col.style.height === 'auto';
-      if (isOpen) close(col);
-      else open(col);
+        for item_index, item in enumerate(items, start=1):
+            panel_id = f"{group_slug}-item-{item_index}"
+            question = _clean_text(item.get("Pregunta"))
+            answer_html = _answer_to_html(_clean_text(item.get("Resposta")))
+            source = _clean_text(item.get("Font"))
+
+            html_parts.append('<article class="faq-item">')
+            html_parts.append(
+                "<button "
+                f'class="faq-trigger" type="button" data-target="{html.escape(panel_id)}" '
+                'aria-expanded="false">'
+                f"<span>{html.escape(question)}</span>"
+                '<span class="faq-icon" aria-hidden="true">+</span>'
+                "</button>"
+            )
+            html_parts.append(f'<div class="faq-panel" id="{html.escape(panel_id)}" hidden>')
+            html_parts.append(f'<div class="faq-answer">{answer_html}</div>')
+            if source:
+                html_parts.append(
+                    f'<p class="faq-source"><a href="{html.escape(source)}" target="_blank" '
+                    f'rel="noreferrer">Font original</a></p>'
+                )
+            html_parts.append("</div>")
+            html_parts.append("</article>")
+
+        html_parts.append("</div>")
+        html_parts.append("</section>")
+
+    html_parts.append("</div>")
+    html_parts.append(
+        """<script>
+(function () {
+  const root = document.querySelector('[data-upc-faq-export="true"]');
+  if (!root) return;
+  root.querySelectorAll('.faq-trigger').forEach((button) => {
+    button.addEventListener('click', () => {
+      const targetId = button.getAttribute('data-target');
+      const panel = targetId ? root.querySelector('#' + CSS.escape(targetId)) : null;
+      if (!panel) return;
+      const isOpen = button.getAttribute('aria-expanded') === 'true';
+      button.setAttribute('aria-expanded', isOpen ? 'false' : 'true');
+      const icon = button.querySelector('.faq-icon');
+      if (icon) icon.textContent = isOpen ? '+' : '−';
+      panel.hidden = isOpen;
     });
   });
-
-  collapses.forEach(col => {
-    col.style.overflow = 'hidden';
-    col.style.transition = 'height 350ms ease';
-    col.style.height = '0px';
-    col.classList.remove('show');
-    setStyles(col, false);
-  });
-})();"""
+})();
+</script>"""
     )
-    out.append("</script>")
-    out.append("</p>")
 
-    return _prettify_export_html("\n".join(out))
+    return _prettify_export_html("\n".join(html_parts)), len(groups)
+
+
+def render_upc_faqaccordion(items: list[dict[str, str]]) -> str:
+    html_text, _groups = render_genweb_accordion([normalize_row_dict(item) for item in items])
+    return html_text
 
 
 def _prettify_export_html(text: str) -> str:
-    raw = (text or "").strip()
+    raw = _clean_text(text)
     if not raw:
         return ""
     try:
@@ -181,28 +192,17 @@ def _prettify_export_html(text: str) -> str:
         return raw
 
 
-def export_text(output_path: str, text: str):
-    with open(output_path, "w", encoding="utf-8") as f:
-        f.write(text)
-
-
-def approved_rows_to_html(approved_rows, log=None):
-    def _log(m):
+def approved_rows_to_html(approved_rows: list[list[Any]], log=None) -> tuple[str, int]:
+    def _log(message: str) -> None:
         if log:
-            log(m)
+            log(message)
 
-    _log(f"Generant HTML per {len(approved_rows)} FAQs aprovades (UI)...")
+    records = apply_default_subtopics(approved_rows_to_records(approved_rows))
+    _log(f"Generant HTML per {len(records)} FAQs aprovades.")
+    validate_subtopics(records, require_for_approved=False)
+    return render_genweb_accordion(records)
 
-    items = []
-    for row in approved_rows:
-        topic, question, answer, source = row
-        items.append(
-            {
-                "Tema": topic,
-                "Pregunta": question,
-                "Resposta": answer,
-                "Font": source,
-            }
-        )
 
-    return render_upc_faqaccordion(items)
+def export_text(output_path: str, text: str) -> None:
+    with open(output_path, "w", encoding="utf-8") as handle:
+        handle.write(text)
