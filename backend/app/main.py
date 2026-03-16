@@ -2,12 +2,17 @@ from __future__ import annotations
 
 import csv
 import io
+import os
+import secrets
 import tempfile
+import threading
+import time
 from pathlib import Path
 
-from fastapi import FastAPI, File, Form, HTTPException, UploadFile
+from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import StreamingResponse
+from fastapi.responses import HTMLResponse, StreamingResponse
+from starlette.middleware.sessions import SessionMiddleware
 
 from app.constants import SHEETS_COLUMNS
 from app.html_export import (
@@ -20,8 +25,11 @@ from app.html_export import (
 )
 from app.job_manager import job_manager
 from app.schemas import (
+    GoogleConnectResponse,
+    GoogleDriveListResponse,
     GoogleSessionResponse,
     GoogleSheetsListResponse,
+    GoogleWorksheetListResponse,
     HtmlExportResponse,
     JobCreatedResponse,
     JobDetailResponse,
@@ -39,27 +47,151 @@ from app.schemas import (
     SourceHtmlExportResponse,
 )
 from app.sheets import (
+    create_google_authorization_url,
+    exchange_google_authorization_code,
     export_rows_to_google_sheets_oauth,
-    get_oauth_client,
     get_google_session_status,
+    list_drive_items_oauth,
     list_spreadsheets_oauth,
+    list_worksheets_oauth,
     logout_google_session,
     read_rows_from_sheets_oauth,
 )
 
 app = FastAPI(title="Scraper Web API")
 
+default_cors_origins = [
+    "http://localhost:5173",
+    "http://127.0.0.1:5173",
+]
+configured_cors_origins = [
+    item.strip()
+    for item in (os.getenv("BACKEND_CORS_ORIGINS") or "").split(",")
+    if item.strip()
+]
+
+app.add_middleware(
+    SessionMiddleware,
+    secret_key=os.getenv("APP_SESSION_SECRET", "dev-session-secret-change-me"),
+    same_site="lax",
+    https_only=(os.getenv("SESSION_COOKIE_SECURE") or "").strip().lower() in {"1", "true", "yes"},
+)
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        "http://localhost:5173",
-        "http://127.0.0.1:5173",
-    ],
+    allow_origins=configured_cors_origins or default_cors_origins,
     allow_origin_regex=r"^https?://(localhost|127\.0\.0\.1|\[::1\])(:\d+)?$",
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+GOOGLE_OAUTH_CALLBACK_PATH = "/api/google/callback"
+GOOGLE_OAUTH_STATE_TTL_SECONDS = 900
+pending_google_oauth_states: dict[str, dict[str, str | float]] = {}
+pending_google_oauth_lock = threading.Lock()
+GOOGLE_SESSION_HEADER = "x-google-session-id"
+
+
+def _frontend_base_url(request: Request) -> str:
+    explicit = (os.getenv("FRONTEND_PUBLIC_URL") or "").strip().rstrip("/")
+    if explicit:
+        return explicit
+
+    origin = (request.headers.get("origin") or "").strip().rstrip("/")
+    if origin:
+        return origin
+
+    return str(request.base_url).rstrip("/")
+
+
+def _google_callback_url(request: Request) -> str:
+    explicit = (os.getenv("GOOGLE_OAUTH_REDIRECT_URI") or "").strip()
+    if explicit:
+        return explicit
+    return str(request.url_for("google_callback"))
+
+
+def _ensure_browser_session(request: Request) -> str:
+    header_session_id = (request.headers.get(GOOGLE_SESSION_HEADER) or "").strip()
+    if header_session_id:
+        request.session["google_session_id"] = header_session_id
+        return header_session_id
+
+    session_id = request.session.get("google_session_id")
+    if not session_id:
+        session_id = secrets.token_urlsafe(24)
+        request.session["google_session_id"] = session_id
+    return session_id
+
+
+def _session_token_file(request: Request) -> str:
+    session_id = _ensure_browser_session(request)
+    return f"google_tokens/{session_id}.json"
+
+
+def _store_pending_google_oauth_state(state: str, session_id: str, oauth_client_json: str, code_verifier: str) -> None:
+    now = time.time()
+    with pending_google_oauth_lock:
+        expired = [
+            key
+            for key, payload in pending_google_oauth_states.items()
+            if now - float(payload.get("created_at", 0)) > GOOGLE_OAUTH_STATE_TTL_SECONDS
+        ]
+        for key in expired:
+            pending_google_oauth_states.pop(key, None)
+
+        pending_google_oauth_states[state] = {
+            "session_id": session_id,
+            "oauth_client_json": oauth_client_json,
+            "code_verifier": code_verifier,
+            "created_at": now,
+        }
+
+
+def _consume_pending_google_oauth_state(state: str | None) -> dict[str, str | float] | None:
+    if not state:
+        return None
+    with pending_google_oauth_lock:
+        payload = pending_google_oauth_states.pop(state, None)
+    if not payload:
+        return None
+    if time.time() - float(payload.get("created_at", 0)) > GOOGLE_OAUTH_STATE_TTL_SECONDS:
+        return None
+    return payload
+
+
+def _google_popup_response(status: str, message: str = "") -> HTMLResponse:
+    safe_status = "success" if status == "success" else "error"
+    safe_message = (message or "").replace("\\", "\\\\").replace("'", "\\'").replace("\n", "\\n").replace("\r", "")
+    html = f"""<!doctype html>
+<html lang="ca">
+<head>
+  <meta charset="utf-8" />
+  <title>Google OAuth</title>
+</head>
+<body>
+  <script>
+    (function () {{
+      var payload = {{ source: 'google-oauth', status: '{safe_status}', message: '{safe_message}' }};
+      try {{
+        if (window.opener && !window.opener.closed) {{
+          window.opener.postMessage(payload, '*');
+          window.close();
+          return;
+        }}
+      }} catch (error) {{}}
+      var nextUrl = '/?google_auth=' + encodeURIComponent(payload.status);
+      if (payload.message) {{
+        nextUrl += '&message=' + encodeURIComponent(payload.message);
+      }}
+      window.location.replace(nextUrl);
+    }})();
+  </script>
+  <p>Autenticacio completada. Pots tancar aquesta pestanya.</p>
+</body>
+</html>"""
+    return HTMLResponse(content=html)
 
 
 def _read_csv_rows(path: str) -> list[dict[str, str]]:
@@ -105,32 +237,100 @@ def health():
 
 
 @app.get("/api/google/session", response_model=GoogleSessionResponse)
-def google_session(token_file: str = "token.json", oauth_client_json: str = "oauth_client.json"):
+def google_session(request: Request, oauth_client_json: str = "oauth_client.json"):
+    token_file = _session_token_file(request)
     return get_google_session_status(token_file=token_file, oauth_client_json=oauth_client_json)
 
 
-@app.post("/api/google/connect", response_model=GoogleSessionResponse)
-def google_connect(oauth_client_json: str = Form(default="oauth_client.json"), token_file: str = Form(default="token.json")):
+@app.post("/api/google/connect", response_model=GoogleConnectResponse)
+def google_connect(request: Request, oauth_client_json: str = Form(default="oauth_client.json")):
+    session_id = _ensure_browser_session(request)
+    callback_url = _google_callback_url(request)
+    state = secrets.token_urlsafe(24)
+    code_verifier = secrets.token_urlsafe(72)
+    _store_pending_google_oauth_state(state, session_id, oauth_client_json, code_verifier)
+
     try:
-        get_oauth_client(oauth_client_json=oauth_client_json, token_file=token_file)
+        authorization_url = create_google_authorization_url(
+            oauth_client_json=oauth_client_json,
+            redirect_uri=callback_url,
+            state=state,
+            code_verifier=code_verifier,
+        )
     except Exception as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
-    status = get_google_session_status(token_file=token_file, oauth_client_json=oauth_client_json)
-    return status
+
+    return {"authorization_url": authorization_url}
+
+
+@app.get(GOOGLE_OAUTH_CALLBACK_PATH, name="google_callback")
+def google_callback(request: Request, code: str | None = None, state: str | None = None, error: str | None = None):
+    if error:
+        return _google_popup_response("error", error)
+
+    pending_state = _consume_pending_google_oauth_state(state)
+    if not code or not pending_state:
+        return _google_popup_response("error", "oauth_state_invalid")
+
+    oauth_client_json = str(pending_state.get("oauth_client_json") or "oauth_client.json")
+    code_verifier = str(pending_state.get("code_verifier") or "").strip()
+    session_id = str(pending_state.get("session_id") or "").strip()
+    if not session_id or not code_verifier:
+        return _google_popup_response("error", "oauth_state_invalid")
+
+    request.session["google_session_id"] = session_id
+    token_file = f"google_tokens/{session_id}.json"
+    callback_url = _google_callback_url(request)
+
+    try:
+        exchange_google_authorization_code(
+            oauth_client_json=oauth_client_json,
+            code=code,
+            state=state,
+            redirect_uri=callback_url,
+            code_verifier=code_verifier,
+            token_file=token_file,
+        )
+    except Exception as exc:
+        return _google_popup_response("error", str(exc))
+
+    return _google_popup_response("success")
 
 
 @app.post("/api/google/logout", response_model=GoogleSessionResponse)
-def google_logout(token_file: str = Form(default="token.json")):
+def google_logout(request: Request):
+    token_file = _session_token_file(request)
     return logout_google_session(token_file=token_file)
 
 
 @app.get("/api/google/spreadsheets", response_model=GoogleSheetsListResponse)
-def google_spreadsheets(oauth_client_json: str = "oauth_client.json", token_file: str = "token.json"):
+def google_spreadsheets(request: Request, oauth_client_json: str = "oauth_client.json"):
+    token_file = _session_token_file(request)
     try:
         spreadsheets = list_spreadsheets_oauth(oauth_client_json=oauth_client_json, token_file=token_file)
     except Exception as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     return {"spreadsheets": spreadsheets}
+
+
+@app.get("/api/google/drive/items", response_model=GoogleDriveListResponse)
+def google_drive_items(request: Request, parent_id: str | None = None):
+    token_file = _session_token_file(request)
+    try:
+        items = list_drive_items_oauth(token_file=token_file, parent_id=parent_id)
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return {"parent_id": parent_id, "items": items}
+
+
+@app.get("/api/google/spreadsheets/worksheets", response_model=GoogleWorksheetListResponse)
+def google_spreadsheet_worksheets(request: Request, spreadsheet_id: str):
+    token_file = _session_token_file(request)
+    try:
+        worksheets = list_worksheets_oauth(token_file=token_file, spreadsheet_id=spreadsheet_id)
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return {"spreadsheet_id": spreadsheet_id, "worksheets": worksheets}
 
 
 @app.post("/api/jobs/scrape", response_model=JobCreatedResponse)
@@ -256,12 +456,12 @@ def export_job_review_to_html(job_id: str):
 
 @app.post("/api/export/html-from-source", response_model=SourceHtmlExportResponse)
 async def export_html_from_source(
+    request: Request,
     input_mode: str = Form(...),
     csv_file: UploadFile | None = File(default=None),
     spreadsheet_title: str | None = Form(default=None),
     worksheet_name: str | None = Form(default=None),
     oauth_client_json: str = Form(default="oauth_client.json"),
-    token_file: str = Form(default="token.json"),
 ):
     mode = (input_mode or "").strip()
     if mode not in {"csv", "sheets_oauth"}:
@@ -284,7 +484,7 @@ async def export_html_from_source(
                 spreadsheet_title=(spreadsheet_title or "").strip(),
                 worksheet_name=(worksheet_name or "").strip(),
                 oauth_client_json=oauth_client_json,
-                token_file=token_file,
+                token_file=_session_token_file(request),
                 create_if_missing=True,
             )
             rows = [normalize_row_dict(row) for row in sheet_rows]
@@ -321,7 +521,7 @@ def export_job_review_to_csv(job_id: str, filename: str | None = None):
 
 
 @app.post("/api/jobs/{job_id}/export/sheets", response_model=SheetsExportResponse)
-def export_job_review_to_sheets(job_id: str, payload: SheetsExportRequest):
+def export_job_review_to_sheets(request: Request, job_id: str, payload: SheetsExportRequest):
     rows = job_manager.get_review_rows(job_id=job_id, only_approved=False)
     if rows is None:
         raise HTTPException(status_code=404, detail="Job not found")
@@ -330,9 +530,10 @@ def export_job_review_to_sheets(job_id: str, payload: SheetsExportRequest):
         export_rows_to_google_sheets_oauth(
             rows=rows,
             spreadsheet_title=payload.spreadsheet_title,
+            spreadsheet_id=payload.spreadsheet_id,
             worksheet_name=payload.worksheet_name,
             oauth_client_json=payload.oauth_client_json,
-            token_file=payload.token_file,
+            token_file=_session_token_file(request),
         )
     except Exception as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc

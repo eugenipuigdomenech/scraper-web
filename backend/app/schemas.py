@@ -107,6 +107,7 @@ class SourceHtmlExportResponse(BaseModel):
 
 class SheetsExportRequest(BaseModel):
     spreadsheet_title: str = Field(min_length=1)
+    spreadsheet_id: str | None = None
     worksheet_name: str = Field(min_length=1)
     oauth_client_json: str = "oauth_client.json"
     token_file: str = "token.json"
@@ -127,5 +128,26 @@ class GoogleSessionResponse(BaseModel):
     oauth_client_found: bool | None = None
 
 
+class GoogleConnectResponse(BaseModel):
+    authorization_url: str
+
+
 class GoogleSheetsListResponse(BaseModel):
     spreadsheets: list[str]
+
+
+class GoogleDriveItemResponse(BaseModel):
+    id: str
+    name: str
+    mime_type: str
+    kind: Literal["folder", "spreadsheet"]
+
+
+class GoogleDriveListResponse(BaseModel):
+    parent_id: str | None = None
+    items: list[GoogleDriveItemResponse]
+
+
+class GoogleWorksheetListResponse(BaseModel):
+    spreadsheet_id: str
+    worksheets: list[str]

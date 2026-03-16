@@ -458,6 +458,100 @@ pre {
   max-width: 100%;
 }
 
+.drive-browser-card,
+.drive-browser-body {
+  display: grid;
+  gap: 0.8rem;
+}
+
+.drive-browser-card {
+  padding-top: 0.35rem;
+  border-top: 1px solid rgba(0, 91, 151, 0.14);
+}
+
+.drive-browser-head {
+  display: flex;
+  align-items: start;
+  justify-content: space-between;
+  gap: 0.8rem;
+}
+
+.drive-browser-card > .secondary,
+.drive-browser-card > .nav-pill,
+.drive-browser-head > .secondary {
+  width: 100%;
+}
+
+.drive-breadcrumbs,
+.drive-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.55rem;
+}
+
+.drive-crumb {
+  padding: 0.45rem 0.7rem;
+  background: #f4f8fb;
+  color: var(--upc-blue-dark);
+  border: 1px solid #c7d8e5;
+  font-size: 0.84rem;
+}
+
+.drive-item {
+  width: 100%;
+  display: grid;
+  gap: 0.18rem;
+  justify-items: start;
+  padding: 0.8rem 0.9rem;
+  background: #fffdfa;
+  color: var(--upc-ink);
+  border: 1px solid #d6dee5;
+  text-align: left;
+}
+
+.drive-item.folder {
+  border-left: 4px solid var(--upc-blue);
+}
+
+.drive-item.spreadsheet {
+  border-left: 4px solid var(--upc-orange);
+}
+
+.drive-item.selected {
+  background: #fff3e4;
+  border-color: #efb26a;
+  box-shadow: inset 0 0 0 1px rgba(240, 127, 47, 0.16);
+}
+
+.drive-item-kind {
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--upc-muted);
+}
+
+.selected-sheet-card {
+  display: grid;
+  gap: 0.2rem;
+  padding: 0.8rem 0.9rem;
+  background: #fff7ec;
+  border: 1px solid #f0c99e;
+  border-left: 4px solid var(--upc-orange);
+}
+
+.selected-sheet-card strong {
+  color: var(--upc-blue-deep);
+}
+
+.worksheet-picker {
+  margin-top: 0.3rem;
+}
+
+.selected-sheet-helper {
+  align-self: end;
+}
+
 .section-head {
   display: flex;
   justify-content: space-between;

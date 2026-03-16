@@ -6,7 +6,9 @@ import requests
 from bs4 import BeautifulSoup
 
 
-def scrape_faqs(url: str, log=None, debug: bool = False) -> List[Tuple[str, str]]:
+def scrape_faqs(
+    url: str, log=None, debug: bool = False, include_group: bool = False
+) -> List[Tuple[str, str] | Tuple[str, str, str]]:
     def _log(m: str):
         if log:
             log(m)
@@ -27,7 +29,7 @@ def scrape_faqs(url: str, log=None, debug: bool = False) -> List[Tuple[str, str]
     r.raise_for_status()
     soup = BeautifulSoup(r.text, "html.parser")
 
-    faqs: List[Tuple[str, str]] = []
+    faqs: List[Tuple[str, str] | Tuple[str, str, str]] = []
 
     def _normalize_question(q: str) -> str:
         text = (q or "").strip()
@@ -37,6 +39,21 @@ def scrape_faqs(url: str, log=None, debug: bool = False) -> List[Tuple[str, str]
 
     def _inner_html(tag) -> str:
         return "".join(str(c) for c in getattr(tag, "contents", [])).strip()
+
+    def _closest_heading_text(node) -> str:
+        cur = node
+        while cur is not None:
+            for sib in cur.previous_siblings:
+                if not getattr(sib, "name", None):
+                    continue
+                if sib.name in {"h2", "h3"}:
+                    return re.sub(r"\s+", " ", sib.get_text(" ", strip=True)).strip()
+                nested = sib.find_all(["h2", "h3"])
+                if nested:
+                    h = nested[-1]
+                    return re.sub(r"\s+", " ", h.get_text(" ", strip=True)).strip()
+            cur = getattr(cur, "parent", None)
+        return ""
 
     # Format 0: FAQs numerades dins .accordion-body
     # Ex.: "1) Pregunta..." seguit de paràgrafs/llistes de resposta fins la següent "N)"
@@ -89,17 +106,38 @@ def scrape_faqs(url: str, log=None, debug: bool = False) -> List[Tuple[str, str]
 
         return numbered
 
-    numbered_blocks: List[List[Tuple[str, str]]] = []
-    for body in soup.select(".accordion-body"):
+    def _group_title_from_item(item) -> str:
+        btn = item.select_one(":scope > .accordion-header button.accordion-button")
+        if not btn:
+            btn = item.select_one("button.accordion-button")
+        if not btn:
+            return ""
+        return re.sub(r"\s+", " ", btn.get_text(" ", strip=True)).strip()
+
+    numbered_blocks: List[Tuple[str, List[Tuple[str, str]]]] = []
+    for item in soup.select(".accordion-item"):
+        body = item.select_one(".accordion-body")
+        if not body:
+            continue
         parsed = _parse_numbered_faq_block(body)
         if not parsed:
             continue
-        numbered_blocks.append(parsed)
+        numbered_blocks.append((_group_title_from_item(item), parsed))
+
+    if not numbered_blocks:
+        for body in soup.select(".accordion-body"):
+            parsed = _parse_numbered_faq_block(body)
+            if not parsed:
+                continue
+            numbered_blocks.append(("", parsed))
 
     if numbered_blocks:
-        merged: List[Tuple[str, str]] = []
-        for block in numbered_blocks:
-            merged.extend(block)
+        merged: List[Tuple[str, str] | Tuple[str, str, str]] = []
+        for group_title, block in numbered_blocks:
+            if include_group:
+                merged.extend((group_title, q, a) for (q, a) in block)
+            else:
+                merged.extend(block)
         return merged
 
     # Format 1: UPC antic
@@ -168,6 +206,9 @@ def scrape_faqs(url: str, log=None, debug: bool = False) -> List[Tuple[str, str]
         a_body = item.select_one(".accordion-body")
         if not a_body:
             continue
+        group_title = ""
+        if q_btn:
+            group_title = re.sub(r"\s+", " ", q_btn.get_text(" ", strip=True)).strip()
 
         # Subformat: FAQs dins de <li> amb <strong>Pregunta</strong> i resposta a sota
         li_items = a_body.select("li")
@@ -193,11 +234,14 @@ def scrape_faqs(url: str, log=None, debug: bool = False) -> List[Tuple[str, str]
             if not answer_html:
                 continue
 
-            key = (q, answer_html)
+            key = (group_title, q, answer_html)
             if key in seen_pairs:
                 continue
             seen_pairs.add(key)
-            li_faqs.append((q, answer_html))
+            if include_group:
+                li_faqs.append((group_title, q, answer_html))
+            else:
+                li_faqs.append((q, answer_html))
 
         if li_faqs:
             faqs.extend(li_faqs)
@@ -208,10 +252,13 @@ def scrape_faqs(url: str, log=None, debug: bool = False) -> List[Tuple[str, str]
         q = _normalize_question(q)
         a = _inner_html(a_body)
         if q and a:
-            key = (q, a)
+            key = (group_title, q, a)
             if key not in seen_pairs:
                 seen_pairs.add(key)
-                faqs.append((q, a))
+                if include_group:
+                    faqs.append((group_title, q, a))
+                else:
+                    faqs.append((q, a))
 
     if faqs:
         return faqs
@@ -223,6 +270,7 @@ def scrape_faqs(url: str, log=None, debug: bool = False) -> List[Tuple[str, str]
 
     if gw4:
         for block in gw4:
+            group_title = _closest_heading_text(block)
             items = block.select(":scope > div")
             if not items:
                 items = block.select("div")
@@ -237,7 +285,10 @@ def scrape_faqs(url: str, log=None, debug: bool = False) -> List[Tuple[str, str]
                 question = _normalize_question(question)
                 answer = content.get_text(" ", strip=True)
                 if question and answer:
-                    faqs.append((question, answer))
+                    if include_group:
+                        faqs.append((group_title, question, answer))
+                    else:
+                        faqs.append((question, answer))
 
         if faqs:
             return faqs
@@ -288,15 +339,28 @@ def build_outputs(
         _log(f"    Topic: {topic}")
 
         try:
-            faqs = scrape_faqs(url, log=log, debug=debug)
+            faqs = scrape_faqs(url, log=log, debug=debug, include_group=True)
             _log(f"    FAQs found: {len(faqs)}")
             ok_urls += 1
 
-            for pregunta, resposta in faqs:
+            subtopic_counts: Dict[str, int] = {}
+
+            for faq in faqs:
+                group_title = ""
+                if len(faq) == 3:
+                    group_title, pregunta, resposta = faq  # type: ignore[misc]
+                else:
+                    pregunta, resposta = faq  # type: ignore[misc]
+                parent_topic = (topic or "").strip() or "Sense topic"
+                subtopic = (group_title or "").strip()
+                if subtopic == parent_topic:
+                    subtopic = ""
+                subtopic = subtopic or "-"
+                subtopic_counts[subtopic] = subtopic_counts.get(subtopic, 0) + 1
                 out_rows.append(
                     [
-                        topic,
-                        "",
+                        parent_topic,
+                        subtopic,
                         pregunta.strip(),
                         resposta.strip(),
                         estat_default,
@@ -308,11 +372,22 @@ def build_outputs(
                     ]
                 )
 
+            if subtopic_counts:
+                summary = ", ".join(f"{name}: {count}" for name, count in subtopic_counts.items())
+                _log(f"    Subtopics detectats: {summary}")
+
             genweb_blocks.append(
                 {
                     "topic": topic,
                     "source_url": url,
-                    "items": [{"q": q.strip(), "a": a.strip()} for (q, a) in faqs],
+                    "items": [
+                        {
+                            "subtopic": (((faq[0] if len(faq) == 3 else "") or "").strip() or "-") if isinstance(faq, tuple) else "-",
+                            "q": (faq[1] if len(faq) == 3 else faq[0]).strip(),
+                            "a": (faq[2] if len(faq) == 3 else faq[1]).strip(),
+                        }
+                        for faq in faqs
+                    ],
                 }
             )
 

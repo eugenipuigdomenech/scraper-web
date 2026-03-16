@@ -7,8 +7,10 @@ import downloadLogo from './assets/download.png'
 import htmlLogo from './assets/html-source-code.png'
 import googleLogo from './assets/Google_logo.png'
 
-const API_BASE = (import.meta.env.VITE_API_URL || 'http://127.0.0.1:8000').replace(/\/$/, '')
+const defaultApiBase = `${window.location.protocol}//${window.location.hostname}:8000`
+const API_BASE = (import.meta.env.VITE_API_URL || defaultApiBase).replace(/\/$/, '')
 const STORAGE_KEY = 'upc-faq-manager-state-v2'
+const GOOGLE_SESSION_KEY = 'upc-google-session-id'
 
 const defaultSources = [
   {
@@ -22,10 +24,8 @@ const defaultState = {
   activeView: 'home',
   sources: defaultSources,
   debug: false,
-  downloadMode: 'csv',
-  downloadCsvFilename: 'faqs-upc.csv',
   downloadSheetTitle: 'FAQs UPC',
-  downloadSheetTab: 'Revisio',
+  downloadWorksheetName: 'Tab1',
   generatorMode: 'csv',
   generatorSheetTitle: 'FAQs UPC',
   generatorSheetTab: 'Revisio',
@@ -88,15 +88,21 @@ function StatCard({ label, value }) {
   )
 }
 
+function getGoogleSessionId() {
+  let current = window.localStorage.getItem(GOOGLE_SESSION_KEY)
+  if (current) return current
+  current = crypto.randomUUID()
+  window.localStorage.setItem(GOOGLE_SESSION_KEY, current)
+  return current
+}
+
 export default function App() {
   const persisted = useMemo(() => loadPersistedState(), [])
   const [activeView, setActiveView] = useState(persisted.activeView)
   const [sources, setSources] = useState(persisted.sources)
   const [debug, setDebug] = useState(persisted.debug)
-  const [downloadMode, setDownloadMode] = useState(persisted.downloadMode)
-  const [downloadCsvFilename, setDownloadCsvFilename] = useState(persisted.downloadCsvFilename)
   const [downloadSheetTitle, setDownloadSheetTitle] = useState(persisted.downloadSheetTitle)
-  const [downloadSheetTab, setDownloadSheetTab] = useState(persisted.downloadSheetTab)
+  const [downloadWorksheetName, setDownloadWorksheetName] = useState(persisted.downloadWorksheetName)
   const [generatorMode, setGeneratorMode] = useState(persisted.generatorMode)
   const [generatorSheetTitle, setGeneratorSheetTitle] = useState(persisted.generatorSheetTitle)
   const [generatorSheetTab, setGeneratorSheetTab] = useState(persisted.generatorSheetTab)
@@ -109,8 +115,14 @@ export default function App() {
   const [jobResult, setJobResult] = useState(null)
   const [health, setHealth] = useState(null)
   const [googleSession, setGoogleSession] = useState(null)
-  const [googleSheets, setGoogleSheets] = useState([])
-  const [showFullLog, setShowFullLog] = useState(false)
+  const [driveItems, setDriveItems] = useState([])
+  const [driveStack, setDriveStack] = useState([{ id: null, name: 'El meu Drive' }])
+  const [driveBrowserOpen, setDriveBrowserOpen] = useState(false)
+  const [driveBusy, setDriveBusy] = useState(false)
+  const [selectedDriveSheet, setSelectedDriveSheet] = useState(null)
+  const [selectedDriveWorksheets, setSelectedDriveWorksheets] = useState([])
+  const [creatingNewSheet, setCreatingNewSheet] = useState(false)
+  const [activityLogs, setActivityLogs] = useState([])
 
   const [processMessage, setProcessMessage] = useState('')
   const [processError, setProcessError] = useState('')
@@ -120,8 +132,25 @@ export default function App() {
   const [downloadBusy, setDownloadBusy] = useState(false)
   const [generatorBusy, setGeneratorBusy] = useState(false)
   const [googleBusy, setGoogleBusy] = useState(false)
+  const [lastAutoExportedJobId, setLastAutoExportedJobId] = useState('')
 
   const { valid: validSources, invalid: invalidSources } = useMemo(() => extractUniqueSources(sources), [sources])
+
+  async function apiFetch(url, options = {}) {
+    const googleSessionId = getGoogleSessionId()
+    return fetch(url, {
+      credentials: 'include',
+      ...options,
+      headers: {
+        'X-Google-Session-Id': googleSessionId,
+        ...(options.headers || {}),
+      },
+    })
+  }
+
+  function appendActivityLog(message) {
+    setActivityLogs((current) => [...current.slice(-59), `${new Date().toLocaleTimeString()} · ${message}`])
+  }
 
   useEffect(() => {
     window.localStorage.setItem(
@@ -130,10 +159,8 @@ export default function App() {
         activeView,
         sources,
         debug,
-        downloadMode,
-        downloadCsvFilename,
         downloadSheetTitle,
-        downloadSheetTab,
+        downloadWorksheetName,
         generatorMode,
         generatorSheetTitle,
         generatorSheetTab,
@@ -145,10 +172,8 @@ export default function App() {
     activeView,
     sources,
     debug,
-    downloadMode,
-    downloadCsvFilename,
     downloadSheetTitle,
-    downloadSheetTab,
+    downloadWorksheetName,
     generatorMode,
     generatorSheetTitle,
     generatorSheetTab,
@@ -157,32 +182,101 @@ export default function App() {
   ])
 
   async function loadJobs() {
-    const response = await fetch(`${API_BASE}/api/jobs`)
+    const response = await apiFetch(`${API_BASE}/api/jobs`)
     if (!response.ok) throw new Error(`HTTP ${response.status}`)
     setJobs(await response.json())
   }
 
-  async function loadGoogleStatus(withSheets = false) {
+  async function loadGoogleStatus() {
     const params = new URLSearchParams()
-    const sessionResponse = await fetch(`${API_BASE}/api/google/session?${params.toString()}`)
+    const sessionResponse = await apiFetch(`${API_BASE}/api/google/session?${params.toString()}`)
     const sessionData = await sessionResponse.json().catch(() => null)
     if (!sessionResponse.ok) throw new Error(sessionData?.detail || `HTTP ${sessionResponse.status}`)
     setGoogleSession(sessionData)
+  }
 
-    if (withSheets && sessionData.connected) {
-      const sheetParams = new URLSearchParams()
-      const sheetsResponse = await fetch(`${API_BASE}/api/google/spreadsheets?${sheetParams.toString()}`)
-      const sheetsData = await sheetsResponse.json().catch(() => null)
-      if (!sheetsResponse.ok) throw new Error(sheetsData?.detail || `HTTP ${sheetsResponse.status}`)
-      setGoogleSheets(sheetsData.spreadsheets || [])
+  async function loadDriveItems(parentId = null, reset = false) {
+    setDriveBusy(true)
+    try {
+      const params = new URLSearchParams()
+      if (parentId) params.set('parent_id', parentId)
+      const response = await apiFetch(`${API_BASE}/api/google/drive/items?${params.toString()}`)
+      const data = await response.json().catch(() => null)
+      if (!response.ok) throw new Error(data?.detail || `HTTP ${response.status}`)
+      setDriveItems(data.items || [])
+      if (reset) {
+        setDriveStack([{ id: null, name: 'El meu Drive' }])
+      }
+    } catch (error) {
+      setExportMessage(error instanceof Error ? error.message : 'No s’ha pogut carregar el Drive.')
+    } finally {
+      setDriveBusy(false)
     }
+  }
+
+  async function loadSpreadsheetWorksheets(spreadsheetId) {
+    try {
+      const params = new URLSearchParams({ spreadsheet_id: spreadsheetId })
+      const response = await apiFetch(`${API_BASE}/api/google/spreadsheets/worksheets?${params.toString()}`)
+      const data = await response.json().catch(() => null)
+      if (!response.ok) throw new Error(data?.detail || `HTTP ${response.status}`)
+      const worksheetNames = data.worksheets || []
+      setSelectedDriveWorksheets(worksheetNames)
+      setDownloadWorksheetName(worksheetNames[0] || 'Tab1')
+    } catch (error) {
+      setSelectedDriveWorksheets([])
+      setDownloadWorksheetName('Tab1')
+      setExportMessage(error instanceof Error ? error.message : 'No s’han pogut carregar les pestanyes del Google Sheet.')
+    }
+  }
+
+  async function openDriveBrowser() {
+    setDriveBrowserOpen(true)
+    setExportMessage('')
+    await loadDriveItems(null, true)
+  }
+
+  async function openDriveFolder(item) {
+    setDriveStack((current) => [...current, { id: item.id, name: item.name }])
+    await loadDriveItems(item.id)
+  }
+
+  async function navigateDriveTo(index) {
+    const nextStack = driveStack.slice(0, index + 1)
+    setDriveStack(nextStack)
+    const current = nextStack[nextStack.length - 1]
+    await loadDriveItems(current.id)
+  }
+
+  function selectDriveSheet(item) {
+    setDownloadSheetTitle(item.name)
+    setGeneratorSheetTitle(item.name)
+    setSelectedDriveSheet(item)
+    setCreatingNewSheet(false)
+    loadSpreadsheetWorksheets(item.id).catch(() => {})
+    setExportMessage(`Google Sheet seleccionat: ${item.name}`)
+    appendActivityLog(`Google Sheet seleccionat: ${item.name}`)
+  }
+
+  function startCreatingNewSheet() {
+    setCreatingNewSheet(true)
+    setDriveBrowserOpen(false)
+    setSelectedDriveSheet(null)
+    setSelectedDriveWorksheets([])
+    setDownloadSheetTitle('')
+    setDownloadWorksheetName('Tab1')
+    appendActivityLog('Mode de creacio de nou Google Sheet activat')
+  }
+
+  function returnToDriveBrowser() {
+    setCreatingNewSheet(false)
   }
 
   useEffect(() => {
     const run = async () => {
       try {
         const [healthResponse] = await Promise.all([
-          fetch(`${API_BASE}/health`),
+          apiFetch(`${API_BASE}/health`),
           loadJobs(),
           loadGoogleStatus(),
         ])
@@ -192,6 +286,46 @@ export default function App() {
       }
     }
     run()
+  }, [])
+
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search)
+    const authStatus = params.get('google_auth')
+    const authMessage = params.get('message')
+    if (!authStatus) return
+
+    loadGoogleStatus().catch(() => {})
+
+    if (authStatus === 'success') {
+      setExportMessage('Sessio de Google connectada correctament.')
+    } else if (authMessage) {
+      setExportMessage(`No s’ha pogut completar el login amb Google: ${decodeURIComponent(authMessage)}`)
+    }
+
+    params.delete('google_auth')
+    params.delete('message')
+    const nextQuery = params.toString()
+    const nextUrl = `${window.location.pathname}${nextQuery ? `?${nextQuery}` : ''}${window.location.hash}`
+    window.history.replaceState({}, '', nextUrl)
+  }, [])
+
+  useEffect(() => {
+    const handleGoogleAuthMessage = (event) => {
+      if (event.data?.source !== 'google-oauth') return
+
+      loadGoogleStatus().catch(() => {})
+
+      if (event.data.status === 'success') {
+        setExportMessage('Sessio de Google connectada correctament.')
+      } else {
+        setExportMessage(`No s’ha pogut completar el login amb Google: ${event.data.message || 'error desconegut'}`)
+      }
+
+      setGoogleBusy(false)
+    }
+
+    window.addEventListener('message', handleGoogleAuthMessage)
+    return () => window.removeEventListener('message', handleGoogleAuthMessage)
   }, [])
 
   useEffect(() => {
@@ -208,14 +342,14 @@ export default function App() {
 
     const poll = async () => {
       try {
-        const response = await fetch(`${API_BASE}/api/jobs/${selectedJobId}`)
+        const response = await apiFetch(`${API_BASE}/api/jobs/${selectedJobId}`)
         const data = await response.json().catch(() => null)
         if (!response.ok) throw new Error(data?.detail || `HTTP ${response.status}`)
         if (cancelled) return
         setSelectedJob(data)
 
         if (data.status === 'done') {
-          const resultResponse = await fetch(`${API_BASE}/api/jobs/${selectedJobId}/result`)
+          const resultResponse = await apiFetch(`${API_BASE}/api/jobs/${selectedJobId}/result`)
           const resultData = await resultResponse.json().catch(() => null)
           if (resultResponse.ok && !cancelled) setJobResult(resultData.result)
           return
@@ -235,6 +369,16 @@ export default function App() {
       if (timer) window.clearTimeout(timer)
     }
   }, [selectedJobId])
+
+  useEffect(() => {
+    if (!selectedJobId || selectedJob?.status !== 'done') return
+    if (!googleSession?.connected) return
+    if (!downloadSheetTitle.trim()) return
+    if (downloadBusy) return
+    if (lastAutoExportedJobId === selectedJobId) return
+
+    exportScrapeResult().catch(() => {})
+  }, [selectedJobId, selectedJob?.status, googleSession?.connected, downloadSheetTitle, downloadBusy, lastAutoExportedJobId])
 
   function addTopic() {
     setSources((current) => [
@@ -293,7 +437,7 @@ export default function App() {
 
     setSubmitting(true)
     try {
-      const response = await fetch(`${API_BASE}/api/jobs/scrape`, {
+      const response = await apiFetch(`${API_BASE}/api/jobs/scrape`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ sources: validSources, debug }),
@@ -301,9 +445,11 @@ export default function App() {
       const data = await response.json().catch(() => null)
       if (!response.ok) throw new Error(data?.detail || `HTTP ${response.status}`)
       setSelectedJobId(data.job_id)
+      setLastAutoExportedJobId('')
+      setActivityLogs([])
       setSelectedJob(null)
       setJobResult(null)
-      setProcessMessage('Procés iniciat. Quan acabi, exporta el resultat a CSV o Google Sheets per fer la revisió i aprovació.')
+      setProcessMessage('Procés iniciat. Quan acabi, si tens Google configurat, s’exportarà automàticament al Sheet seleccionat.')
       await loadJobs()
     } catch (error) {
       setProcessError(error instanceof Error ? error.message : 'No s’ha pogut iniciar el scraping.')
@@ -317,14 +463,15 @@ export default function App() {
     setExportMessage('')
     try {
       const formData = new FormData()
-      const response = await fetch(`${API_BASE}/api/google/connect`, { method: 'POST', body: formData })
+      const response = await apiFetch(`${API_BASE}/api/google/connect`, { method: 'POST', body: formData })
       const data = await response.json().catch(() => null)
       if (!response.ok) throw new Error(data?.detail || `HTTP ${response.status}`)
-      setGoogleSession(data)
-      await loadGoogleStatus(true)
+      if (!data?.authorization_url) throw new Error('No s’ha rebut la URL d’autenticacio de Google.')
+
+      const popup = window.open(data.authorization_url, '_blank', 'popup=yes,width=560,height=720')
+      if (!popup) throw new Error('El navegador ha bloquejat la finestra de login de Google.')
     } catch (error) {
       setExportMessage(error instanceof Error ? error.message : 'No s’ha pogut iniciar la sessió Google.')
-    } finally {
       setGoogleBusy(false)
     }
   }
@@ -333,11 +480,10 @@ export default function App() {
     setGoogleBusy(true)
     try {
       const formData = new FormData()
-      const response = await fetch(`${API_BASE}/api/google/logout`, { method: 'POST', body: formData })
+      const response = await apiFetch(`${API_BASE}/api/google/logout`, { method: 'POST', body: formData })
       const data = await response.json().catch(() => null)
       if (!response.ok) throw new Error(data?.detail || `HTTP ${response.status}`)
       setGoogleSession(data)
-      setGoogleSheets([])
     } catch (error) {
       setExportMessage(error instanceof Error ? error.message : 'No s’ha pogut tancar la sessió Google.')
     } finally {
@@ -349,37 +495,33 @@ export default function App() {
     if (!selectedJobId) return
     setExportMessage('')
 
-    if (downloadMode === 'csv') {
-      const filename = downloadCsvFilename.trim()
-      if (!filename.toLowerCase().endsWith('.csv')) {
-        setExportMessage('El nom del fitxer CSV ha d’acabar amb .csv.')
-        return
-      }
-      window.open(`${API_BASE}/api/jobs/${selectedJobId}/export/csv?filename=${encodeURIComponent(filename)}`, '_blank')
-      return
-    }
-
-    if (!downloadSheetTitle.trim() || !downloadSheetTab.trim()) {
-      setExportMessage('Indica el títol i el nom de la pestanya del Google Sheet.')
+    if (!downloadSheetTitle.trim()) {
+      setExportMessage('Indica el títol del Google Sheet.')
+      appendActivityLog('Exportacio cancel·lada: falta el titol del Google Sheet')
       return
     }
 
     setDownloadBusy(true)
+    appendActivityLog(`Exportant FAQs a Google Sheets: ${downloadSheetTitle.trim()} / ${creatingNewSheet ? 'Tab1' : (downloadWorksheetName.trim() || 'Tab1')}`)
     try {
-      const response = await fetch(`${API_BASE}/api/jobs/${selectedJobId}/export/sheets`, {
+      const response = await apiFetch(`${API_BASE}/api/jobs/${selectedJobId}/export/sheets`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           spreadsheet_title: downloadSheetTitle.trim(),
-          worksheet_name: downloadSheetTab.trim(),
+          spreadsheet_id: selectedDriveSheet?.id || undefined,
+          worksheet_name: creatingNewSheet ? 'Tab1' : (downloadWorksheetName.trim() || 'Tab1'),
         }),
       })
       const data = await response.json().catch(() => null)
       if (!response.ok) throw new Error(data?.detail || `HTTP ${response.status}`)
       setExportMessage(`Resultat exportat a Google Sheets: ${data.spreadsheet_title} / ${data.worksheet_name}. Fes la revisió i marca Estat=Aprovat al full.`)
-      await loadGoogleStatus(true)
+      appendActivityLog(`Exportacio completada: ${data.spreadsheet_title} / ${data.worksheet_name}`)
+      setLastAutoExportedJobId(selectedJobId)
+      await loadGoogleStatus()
     } catch (error) {
       setExportMessage(error instanceof Error ? error.message : 'No s’ha pogut exportar a Google Sheets.')
+      appendActivityLog(`Error d'exportacio a Google Sheets: ${error instanceof Error ? error.message : 'desconegut'}`)
     } finally {
       setDownloadBusy(false)
     }
@@ -401,17 +543,17 @@ export default function App() {
       }
       formData.append('csv_file', generatorCsvFile)
     } else {
-      if (!generatorSheetTitle.trim() || !generatorSheetTab.trim()) {
-        setExportMessage('Indica el títol i la pestanya del Google Sheet.')
+      if (!generatorSheetTitle.trim()) {
+        setExportMessage('Indica el títol del Google Sheet.')
         return
       }
       formData.append('spreadsheet_title', generatorSheetTitle.trim())
-      formData.append('worksheet_name', generatorSheetTab.trim())
+      formData.append('worksheet_name', 'Tab1')
     }
 
     setGeneratorBusy(true)
     try {
-      const response = await fetch(`${API_BASE}/api/export/html-from-source`, {
+      const response = await apiFetch(`${API_BASE}/api/export/html-from-source`, {
         method: 'POST',
         body: formData,
       })
@@ -439,8 +581,17 @@ export default function App() {
     }
   }
 
-  const progressPercent = Math.round((selectedJob?.progress_ratio || 0) * 100)
-  const visibleLogs = showFullLog ? selectedJob?.logs || [] : (selectedJob?.logs || []).slice(-8)
+  const expectsAutoExport = Boolean(googleSession?.connected && downloadSheetTitle.trim())
+  const scrapeProgressPercent = Math.round((selectedJob?.progress_ratio || 0) * 100)
+  let progressPercent = scrapeProgressPercent
+
+  if (selectedJob?.status === 'running' && expectsAutoExport) {
+    progressPercent = Math.min(scrapeProgressPercent, 88)
+  } else if (selectedJob?.status === 'done' && expectsAutoExport) {
+    progressPercent = lastAutoExportedJobId === selectedJobId ? 100 : (downloadBusy ? 94 : 90)
+  }
+
+  const visibleLogs = [...(selectedJob?.logs || []), ...activityLogs]
   const approvedRows = lastGeneratedCode.trim() ? lastGeneratedCode.split('\n').filter(Boolean).length : 0
   return (
     <div className="site-shell">
@@ -496,8 +647,7 @@ export default function App() {
                 <img className="section-illustration" src={faqsLogo} alt="" aria-hidden="true" />
               </div>
               <p>
-                Aquesta aplicació manté el circuit complet: captura FAQs, revisió i aprovació fora de la UI principal via CSV o
-                Google Sheets, i publicació final a Genweb només amb les files marcades com a aprovades.
+                Aquesta aplicació manté el circuit complet: captura FAQs, revisió i aprovació amb Google Sheets, i publicació final a Genweb només amb les files marcades com a aprovades.
               </p>
               <div className="home-actions">
                 <button type="button" onClick={() => setActiveView('scrape')}>Anar a Fonts i descàrrega</button>
@@ -511,33 +661,93 @@ export default function App() {
           <section className="content-grid scrape-layout">
             <aside className="panel side-panel">
               <img className="panel-icon google-badge" src={googleLogo} alt="" aria-hidden="true" />
-              <h3>Serveis</h3>
-              <p className="muted">Configura l’accés a Google i reaprofita els fulls disponibles.</p>
               <p>
                 Estat: <span className={`status ${googleSession?.connected ? 'done' : 'queued'}`}>{googleSession?.connected ? 'Connectada' : 'No connectada'}</span>
               </p>
-              <p className="muted">Configuracio OAuth backend: {googleSession?.oauth_client_json || 'pendent'}</p>
-              {googleSession?.oauth_client_found === false && <p className="feedback error">No s’ha trobat el fitxer OAuth indicat. Posa la ruta correcta o copia `oauth_client.json` al projecte.</p>}
               <div className="action-stack">
-                <button type="button" onClick={connectGoogle} disabled={googleBusy}>{googleBusy ? 'Connectant...' : 'Iniciar sessio amb Google'}</button>
-                <button type="button" className="secondary" onClick={() => loadGoogleStatus(true)} disabled={googleBusy}>Examinar Sheets</button>
-                <button type="button" className="secondary" onClick={logoutGoogle} disabled={googleBusy}>Tancar sessio</button>
+                <button
+                  type="button"
+                  onClick={googleSession?.connected ? logoutGoogle : connectGoogle}
+                  disabled={googleBusy}
+                >
+                  {googleBusy ? (googleSession?.connected ? 'Tancant sessio...' : 'Connectant...') : (googleSession?.connected ? 'Tancar sessio' : 'Iniciar sessio amb Google')}
+                </button>
               </div>
-              {googleSheets.length > 0 && (
-                <div className="sheet-list">
-                  {googleSheets.slice(0, 8).map((sheet) => (
-                    <button
-                      key={sheet}
-                      type="button"
-                      className="sheet-pill"
-                      onClick={() => {
-                        setDownloadSheetTitle(sheet)
-                        setGeneratorSheetTitle(sheet)
-                      }}
-                    >
-                      {sheet}
+              {googleSession?.connected && (
+                <div className="drive-browser-card">
+                  {!creatingNewSheet ? (
+                    <button type="button" className="secondary" onClick={() => (driveBrowserOpen ? setDriveBrowserOpen(false) : openDriveBrowser())} disabled={driveBusy}>
+                      {driveBrowserOpen ? 'Tancar explorador' : 'Explorar Drive'}
                     </button>
-                  ))}
+                  ) : (
+                    <button type="button" className="secondary" onClick={returnToDriveBrowser}>
+                      Tornar a Explorar Drive
+                    </button>
+                  )}
+
+                  <button type="button" className={creatingNewSheet ? 'nav-pill active' : 'nav-pill'} onClick={startCreatingNewSheet}>
+                    Crear Nou Sheets
+                  </button>
+
+                  {creatingNewSheet ? (
+                    <label className="field">
+                      <span>Titol del nou Google Sheet</span>
+                      <input type="text" value={downloadSheetTitle} onChange={(event) => setDownloadSheetTitle(event.target.value)} />
+                    </label>
+                  ) : (
+                    <>
+                      {selectedDriveSheet && (
+                        <div className="selected-sheet-card">
+                          <span className="drive-item-kind">Sheet seleccionat</span>
+                          <strong>{selectedDriveSheet.name}</strong>
+                          {selectedDriveWorksheets.length > 0 && (
+                            <label className="field worksheet-picker">
+                              <span>Pestanya</span>
+                              <select value={downloadWorksheetName} onChange={(event) => setDownloadWorksheetName(event.target.value)}>
+                                {selectedDriveWorksheets.map((worksheet) => (
+                                  <option key={worksheet} value={worksheet}>
+                                    {worksheet}
+                                  </option>
+                                ))}
+                              </select>
+                            </label>
+                          )}
+                        </div>
+                      )}
+
+                      {driveBrowserOpen && (
+                        <div className="drive-browser-body">
+                          <div className="drive-breadcrumbs">
+                            {driveStack.map((crumb, index) => (
+                              <button key={`${crumb.id || 'root'}-${index}`} type="button" className="drive-crumb" onClick={() => navigateDriveTo(index)} disabled={driveBusy}>
+                                {crumb.name}
+                              </button>
+                            ))}
+                          </div>
+
+                          <div className="drive-list">
+                            {driveBusy ? (
+                              <p className="muted">Carregant elements de Drive...</p>
+                            ) : driveItems.length > 0 ? (
+                              driveItems.map((item) => (
+                                <button
+                                  key={item.id}
+                                  type="button"
+                                  className={`drive-item ${item.kind} ${selectedDriveSheet?.id === item.id ? 'selected' : ''}`}
+                                  onClick={() => (item.kind === 'folder' ? openDriveFolder(item) : selectDriveSheet(item))}
+                                >
+                                  <span className="drive-item-kind">{item.kind === 'folder' ? 'Carpeta' : 'Sheet'}</span>
+                                  <strong>{item.name}</strong>
+                                </button>
+                              ))
+                            ) : (
+                              <p className="muted">No hi ha carpetes ni Google Sheets en aquesta ubicació.</p>
+                            )}
+                          </div>
+                        </div>
+                      )}
+                    </>
+                  )}
                 </div>
               )}
             </aside>
@@ -588,31 +798,6 @@ export default function App() {
                 </div>
 
                 <div className="config-grid">
-                  <label className="field">
-                    <span>Sortida de revisio</span>
-                    <div className="toggle-row">
-                      <button type="button" className={downloadMode === 'csv' ? 'nav-pill active' : 'nav-pill'} onClick={() => setDownloadMode('csv')}>CSV</button>
-                      <button type="button" className={downloadMode === 'sheets' ? 'nav-pill active' : 'nav-pill'} onClick={() => setDownloadMode('sheets')}>Google Sheets</button>
-                    </div>
-                  </label>
-
-                  {downloadMode === 'csv' ? (
-                    <label className="field">
-                      <span>Nom del fitxer CSV</span>
-                      <input type="text" value={downloadCsvFilename} onChange={(event) => setDownloadCsvFilename(event.target.value)} />
-                    </label>
-                  ) : (
-                    <>
-                      <label className="field">
-                        <span>Titol del Google Sheet</span>
-                        <input type="text" value={downloadSheetTitle} onChange={(event) => setDownloadSheetTitle(event.target.value)} />
-                      </label>
-                      <label className="field">
-                        <span>Nom de la pestanya</span>
-                        <input type="text" value={downloadSheetTab} onChange={(event) => setDownloadSheetTab(event.target.value)} />
-                      </label>
-                    </>
-                  )}
                 </div>
 
                 <div className="action-bar">
@@ -622,27 +807,9 @@ export default function App() {
               </article>
 
               <article className="panel wide">
-                <div className="section-head">
-                  <div>
-                    <p className="panel-kicker">Seguiment</p>
-                    <h2>Execucio i revisio</h2>
-                    <p className="muted">Quan acabi la captura, exporta el resultat a CSV o Google Sheets. La revisio i aprovacio es fan alli marcant `Estat = Aprovat`.</p>
-                  </div>
-                  <button type="button" className="secondary" onClick={() => setShowFullLog((current) => !current)}>
-                    {showFullLog ? 'Amagar detalls' : 'Veure mes detalls'}
-                  </button>
-                </div>
-
                 <div className="progress-shell">
                   <div className="progress-bar"><span style={{ width: `${progressPercent}%` }} /></div>
                   <strong>{progressPercent}%</strong>
-                </div>
-
-                <div className="summary-grid">
-                  <div><span className={`status ${getStatusClass(selectedJob?.status || 'queued')}`}>{selectedJob?.status || 'sense job'}</span></div>
-                  <div>URL actual: {selectedJob?.current_url || '-'}</div>
-                  <div>Processades: {selectedJob?.processed_sources || 0}/{selectedJob?.total_sources || 0}</div>
-                  <div>Temps total: {jobResult?.duration_s ? `${jobResult.duration_s}s` : '-'}</div>
                 </div>
 
                 {jobResult && (
@@ -655,15 +822,6 @@ export default function App() {
                 )}
 
                 <pre>{visibleLogs.join('\n') || 'Sense logs encara.'}</pre>
-
-                <div className="action-stack">
-                  <button type="button" onClick={exportScrapeResult} disabled={!selectedJobId || downloadBusy}>
-                    {downloadBusy ? 'Exportant...' : 'Exportar per revisar'}
-                  </button>
-                  <button type="button" className="secondary" onClick={() => setActiveView('export')}>
-                    Anar a Exporta codi
-                  </button>
-                </div>
               </article>
             </div>
           </section>
@@ -700,16 +858,10 @@ export default function App() {
                   <input type="file" accept=".csv,text/csv" onChange={(event) => setGeneratorCsvFile(event.target.files?.[0] || null)} />
                 </label>
               ) : (
-                <>
-                  <label className="field">
-                    <span>Titol del Google Sheet</span>
-                    <input type="text" value={generatorSheetTitle} onChange={(event) => setGeneratorSheetTitle(event.target.value)} />
-                  </label>
-                  <label className="field">
-                    <span>Nom de la pestanya</span>
-                    <input type="text" value={generatorSheetTab} onChange={(event) => setGeneratorSheetTab(event.target.value)} />
-                  </label>
-                </>
+                <label className="field">
+                  <span>Titol del Google Sheet</span>
+                  <input type="text" value={generatorSheetTitle} onChange={(event) => setGeneratorSheetTitle(event.target.value)} />
+                </label>
               )}
 
               <div className="action-stack">

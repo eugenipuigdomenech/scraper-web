@@ -6,10 +6,11 @@ from typing import Dict, List
 from bs4 import BeautifulSoup, NavigableString
 
 import gspread
+import requests
 from google.auth.transport.requests import Request
 from google.oauth2.credentials import Credentials as OAuthCredentials
 from google.oauth2.service_account import Credentials as ServiceAccountCredentials
-from google_auth_oauthlib.flow import InstalledAppFlow
+from google_auth_oauthlib.flow import Flow
 
 try:
     from .constants import OAUTH_SCOPES, SHEETS_COLUMNS
@@ -19,7 +20,6 @@ except ImportError:
 
 def get_oauth_client(oauth_client_json="oauth_client.json", token_file="token.json"):
     token_file = resolve_token_path(token_file)
-    oauth_client_config = resolve_oauth_client_config(oauth_client_json)
     creds = None
     try:
         if os.path.exists(token_file):
@@ -36,13 +36,7 @@ def get_oauth_client(oauth_client_json="oauth_client.json", token_file="token.js
             creds = None
 
     if not creds or not creds.valid:
-        try:
-            flow = InstalledAppFlow.from_client_config(oauth_client_config, OAUTH_SCOPES)
-            creds = flow.run_local_server(port=0)
-            with open(token_file, "w", encoding="utf-8") as f:
-                f.write(creds.to_json())
-        except Exception as e:
-            raise RuntimeError(f"OAuth error: {_format_google_error(e)}") from e
+        raise RuntimeError("No hi ha cap sessio Google activa. Inicia sessio amb Google des del navegador.")
 
     return gspread.authorize(creds)
 
@@ -54,14 +48,14 @@ def resolve_oauth_client_config(path: str = "oauth_client.json") -> dict:
 
     if client_id and client_secret:
         return {
-            "installed": {
+            "web": {
                 "client_id": client_id,
                 "project_id": project_id or "upc-faq-manager",
                 "auth_uri": "https://accounts.google.com/o/oauth2/auth",
                 "token_uri": "https://oauth2.googleapis.com/token",
                 "auth_provider_x509_cert_url": "https://www.googleapis.com/oauth2/v1/certs",
                 "client_secret": client_secret,
-                "redirect_uris": ["http://localhost"],
+                "redirect_uris": [os.getenv("GOOGLE_OAUTH_REDIRECT_URI") or "http://localhost:8000/api/google/callback"],
             }
         }
 
@@ -70,6 +64,55 @@ def resolve_oauth_client_config(path: str = "oauth_client.json") -> dict:
 
     with open(oauth_path, "r", encoding="utf-8") as handle:
         return json.load(handle)
+
+
+def create_google_authorization_url(
+    *,
+    oauth_client_json: str = "oauth_client.json",
+    redirect_uri: str,
+    state: str,
+    code_verifier: str,
+) -> str:
+    oauth_client_config = resolve_oauth_client_config(oauth_client_json)
+    flow = Flow.from_client_config(oauth_client_config, scopes=OAUTH_SCOPES, state=state)
+    flow.redirect_uri = redirect_uri
+    flow.code_verifier = code_verifier
+    authorization_url, _ = flow.authorization_url(
+        access_type="offline",
+        include_granted_scopes="true",
+        code_challenge_method="S256",
+        prompt="consent",
+    )
+    return authorization_url
+
+
+def exchange_google_authorization_code(
+    *,
+    oauth_client_json: str = "oauth_client.json",
+    code: str,
+    state: str,
+    redirect_uri: str,
+    code_verifier: str,
+    token_file: str = "token.json",
+) -> None:
+    # Google can return an expanded granted scope set; allow oauthlib to accept it.
+    os.environ.setdefault("OAUTHLIB_RELAX_TOKEN_SCOPE", "1")
+    oauth_client_config = resolve_oauth_client_config(oauth_client_json)
+    flow = Flow.from_client_config(oauth_client_config, scopes=OAUTH_SCOPES, state=state)
+    flow.redirect_uri = redirect_uri
+    flow.code_verifier = code_verifier
+    try:
+        flow.fetch_token(code=code)
+    except Exception as e:
+        raise RuntimeError(f"OAuth error: {_format_google_error(e)}") from e
+
+    creds = flow.credentials
+    if creds is None:
+        raise RuntimeError("Google no ha retornat credencials valides.")
+
+    token_path = resolve_token_path(token_file)
+    with open(token_path, "w", encoding="utf-8") as handle:
+        handle.write(creds.to_json())
 
 
 def resolve_oauth_client_path(path: str) -> str:
@@ -104,6 +147,9 @@ def resolve_oauth_client_path(path: str) -> str:
 def resolve_token_path(path: str) -> str:
     p = (path or "").strip() or "token.json"
     if os.path.isabs(p):
+        parent = os.path.dirname(p)
+        if parent:
+            os.makedirs(parent, exist_ok=True)
         return p
     appdata = os.getenv("APPDATA")
     if appdata:
@@ -111,7 +157,11 @@ def resolve_token_path(path: str) -> str:
     else:
         base_dir = os.path.join(os.path.expanduser("~"), ".upc_faq_scraper")
     os.makedirs(base_dir, exist_ok=True)
-    return os.path.join(base_dir, p)
+    resolved = os.path.join(base_dir, p)
+    parent = os.path.dirname(resolved)
+    if parent:
+        os.makedirs(parent, exist_ok=True)
+    return resolved
 
 
 def get_google_session_status(
@@ -151,6 +201,98 @@ def list_spreadsheets_oauth(
     files = client.list_spreadsheet_files()
     titles = sorted({(item.get("name") or "").strip() for item in files if (item.get("name") or "").strip()})
     return titles
+
+
+def _get_oauth_credentials(token_file: str = "token.json") -> OAuthCredentials:
+    resolved = resolve_token_path(token_file)
+    if not os.path.exists(resolved):
+        raise RuntimeError("No hi ha cap sessio Google activa. Inicia sessio amb Google des del navegador.")
+
+    try:
+        creds = OAuthCredentials.from_authorized_user_file(resolved, OAUTH_SCOPES)
+    except Exception as exc:
+        raise RuntimeError(f"No s'han pogut carregar les credencials de Google: {_format_google_error(exc)}") from exc
+
+    if creds.expired and creds.refresh_token:
+        try:
+            creds.refresh(Request())
+            with open(resolved, "w", encoding="utf-8") as handle:
+                handle.write(creds.to_json())
+        except Exception as exc:
+            raise RuntimeError(f"No s'ha pogut refrescar la sessio Google: {_format_google_error(exc)}") from exc
+
+    if not creds.valid:
+        raise RuntimeError("No hi ha cap sessio Google activa. Inicia sessio amb Google des del navegador.")
+
+    return creds
+
+
+def list_drive_items_oauth(
+    *,
+    token_file: str = "token.json",
+    parent_id: str | None = None,
+) -> list[dict[str, str]]:
+    creds = _get_oauth_credentials(token_file=token_file)
+    query_parent = (parent_id or "root").strip() or "root"
+    query = (
+        f"'{query_parent}' in parents and trashed = false and "
+        "("
+        "mimeType = 'application/vnd.google-apps.folder' or "
+        "mimeType = 'application/vnd.google-apps.spreadsheet'"
+        ")"
+    )
+    params = {
+        "q": query,
+        "fields": "files(id,name,mimeType)",
+        "orderBy": "folder,name_natural",
+        "pageSize": "100",
+        "supportsAllDrives": "true",
+        "includeItemsFromAllDrives": "true",
+    }
+    headers = {"Authorization": f"Bearer {creds.token}"}
+
+    try:
+        response = requests.get("https://www.googleapis.com/drive/v3/files", params=params, headers=headers, timeout=20)
+        response.raise_for_status()
+    except Exception as exc:
+        raise RuntimeError(f"No s'han pogut llistar els elements de Drive: {_format_google_error(exc)}") from exc
+
+    files = response.json().get("files") or []
+    items = []
+    for item in files:
+        mime_type = (item.get("mimeType") or "").strip()
+        if mime_type == "application/vnd.google-apps.folder":
+            kind = "folder"
+        elif mime_type == "application/vnd.google-apps.spreadsheet":
+            kind = "spreadsheet"
+        else:
+            continue
+        items.append(
+            {
+                "id": (item.get("id") or "").strip(),
+                "name": (item.get("name") or "").strip(),
+                "mime_type": mime_type,
+                "kind": kind,
+            }
+        )
+    return items
+
+
+def list_worksheets_oauth(
+    *,
+    token_file: str = "token.json",
+    spreadsheet_id: str,
+) -> list[str]:
+    client = get_oauth_client(token_file=token_file)
+    try:
+        spreadsheet = client.open_by_key((spreadsheet_id or "").strip())
+    except Exception as exc:
+        raise RuntimeError(f"No s'ha pogut obrir el Google Sheet seleccionat: {_format_google_error(exc)}") from exc
+
+    try:
+        return [worksheet.title for worksheet in spreadsheet.worksheets() if (worksheet.title or "").strip()]
+    except Exception as exc:
+        raise RuntimeError(f"No s'han pogut llegir les pestanyes del Google Sheet: {_format_google_error(exc)}") from exc
 
 
 def _format_google_error(e: Exception) -> str:
@@ -242,10 +384,13 @@ def export_rows_to_google_sheets_oauth(
     rows: List[List[str]],
     spreadsheet_title: str,
     worksheet_name: str,
+    spreadsheet_id: str | None = None,
     oauth_client_json: str = "oauth_client.json",
     token_file: str = "token.json",
     log=None,
 ):
+    data_start_row = 5
+
     def _log(m: str):
         if log:
             log(m)
@@ -312,14 +457,146 @@ def export_rows_to_google_sheets_oauth(
         rendered = re.sub(r" *\n *", "\n", rendered)
         return rendered.strip()
 
+    def _ensure_sheet_headers(worksheet, current_values: List[List[str]]) -> List[List[str]]:
+        expected = list(SHEETS_COLUMNS)
+        current_header = current_values[0] if current_values else []
+        normalized_current = [_norm(cell) for cell in current_header[: len(expected)]]
+        normalized_expected = [_norm(cell) for cell in expected]
+
+        if worksheet.col_count < len(expected):
+            worksheet.add_cols(len(expected) - worksheet.col_count)
+
+        if not current_values:
+            worksheet.update("A1:J1", [expected], value_input_option="RAW")
+            _log("Capcalera creada a la primera fila")
+            return [expected]
+
+        if normalized_current == normalized_expected:
+            return current_values
+
+        worksheet.insert_row(expected, index=1, value_input_option="RAW")
+        _log("Capcalera afegida a la primera fila")
+        return [expected, *current_values]
+
+    def _apply_empty_sheet_layout(spreadsheet, worksheet, total_rows: int) -> None:
+        sheet_id = int(worksheet.id)
+        total_columns = len(SHEETS_COLUMNS)
+        end_row_index = max(worksheet.row_count, total_rows + 25)
+        status_values = [{"userEnteredValue": value} for value in ("Pendent", "Aprovat", "Rebutjat")]
+        preferred_widths = {
+            0: 130,  # Tema
+            1: 165,  # Subtopic
+            3: 520,  # Resposta
+            4: 100,  # Estat
+        }
+
+        requests = [
+            {
+                "repeatCell": {
+                    "range": {
+                        "sheetId": sheet_id,
+                        "startRowIndex": 0,
+                        "endRowIndex": end_row_index,
+                        "startColumnIndex": 0,
+                        "endColumnIndex": total_columns,
+                    },
+                    "cell": {
+                        "userEnteredFormat": {
+                            "wrapStrategy": "WRAP",
+                            "verticalAlignment": "TOP",
+                        }
+                    },
+                    "fields": "userEnteredFormat.wrapStrategy,userEnteredFormat.verticalAlignment",
+                }
+            },
+            {
+                "setDataValidation": {
+                    "range": {
+                        "sheetId": sheet_id,
+                        "startRowIndex": 1,
+                        "endRowIndex": end_row_index,
+                        "startColumnIndex": 4,
+                        "endColumnIndex": 5,
+                    },
+                    "rule": {
+                        "condition": {
+                            "type": "ONE_OF_LIST",
+                            "values": status_values,
+                        },
+                        "showCustomUi": True,
+                        "strict": False,
+                    },
+                }
+            },
+            {
+                "autoResizeDimensions": {
+                    "dimensions": {
+                        "sheetId": sheet_id,
+                        "dimension": "COLUMNS",
+                        "startIndex": 0,
+                        "endIndex": total_columns,
+                    }
+                }
+            },
+        ]
+
+        for column_index, pixel_size in preferred_widths.items():
+            requests.append(
+                {
+                    "updateDimensionProperties": {
+                        "range": {
+                            "sheetId": sheet_id,
+                            "dimension": "COLUMNS",
+                            "startIndex": column_index,
+                            "endIndex": column_index + 1,
+                        },
+                        "properties": {
+                            "pixelSize": pixel_size,
+                        },
+                        "fields": "pixelSize",
+                    }
+                }
+            )
+
+        spreadsheet.batch_update(
+            {
+                "requests": requests
+            }
+        )
+        _log("Format inicial aplicat: ajust, alineacio superior, amplades de columna i desplegable d'Estat")
+
+    def _clear_existing_data_block(worksheet) -> None:
+        existing_values = worksheet.get(f"A{data_start_row}:J")
+        if not existing_values:
+            return
+
+        max_row = data_start_row - 1
+        for index, row in enumerate(existing_values, start=data_start_row):
+            if any((cell or "").strip() for cell in row):
+                max_row = index
+
+        if max_row < data_start_row:
+            return
+
+        worksheet.batch_clear([f"A{data_start_row}:J{max_row}"])
+        _log(f"Bloc de dades netejat: A{data_start_row}:J{max_row}")
+
     client = get_oauth_client(oauth_client_json=oauth_client_json, token_file=token_file)
 
-    try:
-        sh = _open_sheet_lenient(client, spreadsheet_title, log=log)
-        _log(f"Spreadsheet obert: {sh.title}")
-    except Exception:
-        sh = client.create(spreadsheet_title)
-        _log(f"Spreadsheet creat: {spreadsheet_title}")
+    spreadsheet_key = (spreadsheet_id or "").strip()
+    if spreadsheet_key:
+        try:
+            sh = client.open_by_key(spreadsheet_key)
+            _log(f"Spreadsheet obert per ID: {sh.title}")
+        except Exception as exc:
+            raise RuntimeError(f"No s'ha pogut obrir el Google Sheet seleccionat: {_format_google_error(exc)}") from exc
+    else:
+        try:
+            sh = _open_sheet_lenient(client, spreadsheet_title, log=log)
+            _log(f"Spreadsheet obert: {sh.title}")
+        except Exception:
+            sh = client.create(spreadsheet_title)
+            _log(f"Spreadsheet creat: {spreadsheet_title}")
 
     try:
         ws = sh.worksheet(worksheet_name)
@@ -336,9 +613,11 @@ def export_rows_to_google_sheets_oauth(
     is_truly_empty = not values or all((not r) or all((c or "").strip() == "" for c in r) for r in values)
     if is_truly_empty:
         ws.clear()
-        ws.append_row(SHEETS_COLUMNS, value_input_option="RAW")
-        _log("Capçalera afegida")
-        values = [SHEETS_COLUMNS]
+        values = []
+    data_start_row = 2 if is_truly_empty else 5
+
+    values = _ensure_sheet_headers(ws, values)
+    _log(f"Capcalera validada amb {len(SHEETS_COLUMNS)} columnes")
 
     first_created: dict[tuple[str, str, str], str] = {}
     existing_answers: dict[tuple[str, str, str], set[str]] = {}
@@ -379,10 +658,16 @@ def export_rows_to_google_sheets_oauth(
     _log(f"Saltades (mateixa resposta): {skipped} | Noves (resposta diferent): {len(to_append)}")
 
     if to_append:
-        ws.append_rows(to_append, value_input_option="RAW")
-        _log(f"Rows appended: {len(to_append)}")
+        _clear_existing_data_block(ws)
+        start_row = data_start_row
+        end_row = start_row + len(to_append) - 1
+        ws.update(f"A{start_row}:J{end_row}", to_append, value_input_option="RAW")
+        _log(f"Rows escrites: {len(to_append)} (A{start_row}:J{end_row})")
     else:
         _log("No s'ha afegit res (tot eren duplicats de resposta).")
+
+    if is_truly_empty:
+        _apply_empty_sheet_layout(sh, ws, data_start_row + max(len(to_append), 1))
 
     try:
         ws.update_acell("K1", f"LAST_WRITE: {now_ts}")
