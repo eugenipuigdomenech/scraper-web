@@ -177,12 +177,37 @@ def get_google_session_status(
     except Exception:
         oauth_path = str(Path.cwd() / ((oauth_client_json or "").strip() or "oauth_client.json"))
         oauth_found = False
+    profile_name = None
+    profile_email = None
+    profile_picture = None
+
+    if connected:
+        try:
+            creds = _get_oauth_credentials(token_file=token_file)
+            response = requests.get(
+                "https://www.googleapis.com/oauth2/v3/userinfo",
+                headers={"Authorization": f"Bearer {creds.token}"},
+                timeout=10,
+            )
+            if response.ok:
+                profile = response.json()
+                profile_name = (profile.get("name") or "").strip() or None
+                profile_email = (profile.get("email") or "").strip() or None
+                profile_picture = (profile.get("picture") or "").strip() or None
+        except Exception:
+            profile_name = None
+            profile_email = None
+            profile_picture = None
+
     return {
         "connected": connected,
         "token_file": resolved,
         "account_hint": os.path.basename(resolved) if connected else None,
         "oauth_client_json": oauth_path,
         "oauth_client_found": oauth_found,
+        "profile_name": profile_name,
+        "profile_email": profile_email,
+        "profile_picture": profile_picture,
     }
 
 

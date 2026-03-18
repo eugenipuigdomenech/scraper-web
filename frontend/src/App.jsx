@@ -1,5 +1,6 @@
 ﻿import { useEffect, useMemo, useState } from 'react'
 import './App.css'
+import { useRef } from 'react'
 import upcRoundLogo from './assets/upc_logo.png'
 import homeLogo from './assets/home_logo.png'
 import faqsLogo from './assets/faqs1_logo.png'
@@ -16,7 +17,7 @@ const defaultSources = [
   {
     id: crypto.randomUUID(),
     topic: 'Admissions',
-    urls: [{ id: crypto.randomUUID(), value: '' }],
+    urls: [{ id: crypto.randomUUID(), value: '', enabled: true }],
   },
 ]
 
@@ -33,11 +34,126 @@ const defaultState = {
   lastSelectedJobId: '',
 }
 
+function createEmptySource() {
+  return {
+    id: crypto.randomUUID(),
+    topic: '',
+    urls: [{ id: crypto.randomUUID(), value: '', enabled: true }],
+  }
+}
+
+function normalizeUrlRow(row) {
+  if (typeof row === 'string') {
+    return { id: crypto.randomUUID(), value: row, enabled: true }
+  }
+
+  return {
+    id: typeof row?.id === 'string' && row.id ? row.id : crypto.randomUUID(),
+    value: typeof row?.value === 'string' ? row.value : '',
+    enabled: row?.enabled !== false,
+  }
+}
+
+function normalizeSources(input) {
+  if (!Array.isArray(input) || input.length === 0) return defaultSources
+
+  const normalized = input.map((group) => ({
+    id: typeof group?.id === 'string' && group.id ? group.id : crypto.randomUUID(),
+    topic: typeof group?.topic === 'string' ? group.topic : '',
+    urls:
+      Array.isArray(group?.urls) && group.urls.length > 0
+        ? group.urls.map(normalizeUrlRow)
+        : [{ id: crypto.randomUUID(), value: '', enabled: true }],
+  }))
+
+  return normalized.length > 0 ? normalized : defaultSources
+}
+
+function escapeCsvCell(value) {
+  const text = `${value ?? ''}`
+  if (/[";\n\r]/.test(text)) {
+    return `"${text.replace(/"/g, '""')}"`
+  }
+  return text
+}
+
+function parseConfigCsv(text) {
+  const rows = []
+  let current = ''
+  let row = []
+  let insideQuotes = false
+
+  for (let index = 0; index < text.length; index += 1) {
+    const char = text[index]
+    const next = text[index + 1]
+
+    if (char === '"') {
+      if (insideQuotes && next === '"') {
+        current += '"'
+        index += 1
+      } else {
+        insideQuotes = !insideQuotes
+      }
+      continue
+    }
+
+    if (char === ';' && !insideQuotes) {
+      row.push(current)
+      current = ''
+      continue
+    }
+
+    if ((char === '\n' || char === '\r') && !insideQuotes) {
+      if (char === '\r' && next === '\n') index += 1
+      row.push(current)
+      rows.push(row)
+      row = []
+      current = ''
+      continue
+    }
+
+    current += char
+  }
+
+  if (current || row.length > 0) {
+    row.push(current)
+    rows.push(row)
+  }
+
+  if (rows.length === 0) return []
+
+  const [header, ...dataRows] = rows
+  const normalizedHeader = header.map((cell) => cell.trim().toLowerCase())
+  const topicIndex = normalizedHeader.indexOf('topic')
+  const urlIndex = normalizedHeader.indexOf('url')
+  const enabledIndex = normalizedHeader.indexOf('enabled')
+
+  if (topicIndex === -1 || urlIndex === -1 || enabledIndex === -1) {
+    throw new Error('El CSV de configuracio ha de tenir les columnes topic, url i enabled.')
+  }
+
+  return dataRows
+    .filter((cells) => cells.some((cell) => cell.trim() !== ''))
+    .map((cells) => ({
+      topic: (cells[topicIndex] || '').trim(),
+      url: (cells[urlIndex] || '').trim(),
+      enabled: !['false', '0', 'no', 'off'].includes(((cells[enabledIndex] || '').trim().toLowerCase())),
+    }))
+}
+
+function getReadableError(error, fallbackMessage) {
+  if (error instanceof TypeError && error.message === 'Failed to fetch') {
+    return 'No s’ha pogut connectar amb el servidor. Revisa que el backend estigui en marxa.'
+  }
+  return error instanceof Error ? error.message : fallbackMessage
+}
+
 function loadPersistedState() {
   try {
     const raw = window.localStorage.getItem(STORAGE_KEY)
     if (!raw) return defaultState
-    return { ...defaultState, ...JSON.parse(raw) }
+    const parsed = JSON.parse(raw)
+    return { ...defaultState, ...parsed, sources: normalizeSources(parsed.sources) }
   } catch {
     return defaultState
   }
@@ -61,6 +177,7 @@ function extractUniqueSources(groups) {
     for (const row of group.urls) {
       const url = row.value.trim()
       if (!url) continue
+      if (row.enabled === false) continue
       if (!isValidHttpUrl(url)) {
         invalid.push(url)
         continue
@@ -75,19 +192,6 @@ function extractUniqueSources(groups) {
   return { valid, invalid }
 }
 
-function getStatusClass(status) {
-  return ['queued', 'running', 'done', 'error'].includes(status) ? status : 'queued'
-}
-
-function StatCard({ label, value }) {
-  return (
-    <div className="stat-card">
-      <strong>{value}</strong>
-      <span>{label}</span>
-    </div>
-  )
-}
-
 function getGoogleSessionId() {
   let current = window.localStorage.getItem(GOOGLE_SESSION_KEY)
   if (current) return current
@@ -98,22 +202,22 @@ function getGoogleSessionId() {
 
 export default function App() {
   const persisted = useMemo(() => loadPersistedState(), [])
+  const configImportInputRef = useRef(null)
   const [activeView, setActiveView] = useState(persisted.activeView)
   const [sources, setSources] = useState(persisted.sources)
-  const [debug, setDebug] = useState(persisted.debug)
+  const [debug] = useState(persisted.debug)
   const [downloadSheetTitle, setDownloadSheetTitle] = useState(persisted.downloadSheetTitle)
   const [downloadWorksheetName, setDownloadWorksheetName] = useState(persisted.downloadWorksheetName)
   const [generatorMode, setGeneratorMode] = useState(persisted.generatorMode)
   const [generatorSheetTitle, setGeneratorSheetTitle] = useState(persisted.generatorSheetTitle)
-  const [generatorSheetTab, setGeneratorSheetTab] = useState(persisted.generatorSheetTab)
   const [lastGeneratedCode, setLastGeneratedCode] = useState(persisted.lastGeneratedCode)
   const [selectedJobId, setSelectedJobId] = useState(persisted.lastSelectedJobId)
 
   const [generatorCsvFile, setGeneratorCsvFile] = useState(null)
-  const [jobs, setJobs] = useState([])
+  const [_JOBS, setJobs] = useState([])
   const [selectedJob, setSelectedJob] = useState(null)
   const [jobResult, setJobResult] = useState(null)
-  const [health, setHealth] = useState(null)
+  const [_HEALTH, setHealth] = useState(null)
   const [googleSession, setGoogleSession] = useState(null)
   const [driveItems, setDriveItems] = useState([])
   const [driveStack, setDriveStack] = useState([{ id: null, name: 'El meu Drive' }])
@@ -135,6 +239,15 @@ export default function App() {
   const [lastAutoExportedJobId, setLastAutoExportedJobId] = useState('')
 
   const { valid: validSources, invalid: invalidSources } = useMemo(() => extractUniqueSources(sources), [sources])
+  const enabledSourceCount = useMemo(
+    () => sources.reduce((sum, group) => sum + group.urls.filter((url) => url.enabled !== false && url.value.trim()).length, 0),
+    [sources],
+  )
+  const disabledSourceCount = useMemo(
+    () => sources.reduce((sum, group) => sum + group.urls.filter((url) => url.enabled === false).length, 0),
+    [sources],
+  )
+  const googleProfileLabel = googleSession?.profile_name || googleSession?.profile_email || 'Sessio de Google'
 
   async function apiFetch(url, options = {}) {
     const googleSessionId = getGoogleSessionId()
@@ -163,7 +276,6 @@ export default function App() {
         downloadWorksheetName,
         generatorMode,
         generatorSheetTitle,
-        generatorSheetTab,
         lastGeneratedCode,
         lastSelectedJobId: selectedJobId,
       }),
@@ -176,7 +288,6 @@ export default function App() {
     downloadWorksheetName,
     generatorMode,
     generatorSheetTitle,
-    generatorSheetTab,
     lastGeneratedCode,
     selectedJobId,
   ])
@@ -259,6 +370,12 @@ export default function App() {
   }
 
   function startCreatingNewSheet() {
+    if (creatingNewSheet) {
+      setCreatingNewSheet(false)
+      setDownloadSheetTitle(selectedDriveSheet?.name || '')
+      return
+    }
+
     setCreatingNewSheet(true)
     setDriveBrowserOpen(false)
     setSelectedDriveSheet(null)
@@ -268,22 +385,26 @@ export default function App() {
     appendActivityLog('Mode de creacio de nou Google Sheet activat')
   }
 
-  function returnToDriveBrowser() {
+  async function returnToDriveBrowser() {
     setCreatingNewSheet(false)
+    setDriveBrowserOpen(true)
+    setExportMessage('')
+    await loadDriveItems(null, true)
   }
 
   useEffect(() => {
     const run = async () => {
       try {
-        const [healthResponse] = await Promise.all([
-          apiFetch(`${API_BASE}/health`),
-          loadJobs(),
-          loadGoogleStatus(),
-        ])
+        const healthResponse = await apiFetch(`${API_BASE}/health`)
+        if (!healthResponse.ok) throw new Error(`HTTP ${healthResponse.status}`)
         setHealth(await healthResponse.json())
+        setProcessError('')
       } catch (error) {
-        setProcessError(error instanceof Error ? error.message : 'No s’ha pogut carregar l’estat inicial.')
+        setProcessError(getReadableError(error, 'No s’ha pogut carregar l’estat inicial.'))
       }
+
+      loadJobs().catch(() => {})
+      loadGoogleStatus().catch(() => {})
     }
     run()
   }, [])
@@ -342,6 +463,7 @@ export default function App() {
 
     const poll = async () => {
       try {
+        setProcessError('')
         const response = await apiFetch(`${API_BASE}/api/jobs/${selectedJobId}`)
         const data = await response.json().catch(() => null)
         if (!response.ok) throw new Error(data?.detail || `HTTP ${response.status}`)
@@ -359,7 +481,19 @@ export default function App() {
           timer = window.setTimeout(poll, 1500)
         }
       } catch (error) {
-        if (!cancelled) setProcessError(error instanceof Error ? error.message : 'No s’ha pogut carregar el job.')
+        if (cancelled) return
+
+        const message = getReadableError(error, 'No s’ha pogut carregar el job.')
+        if (message === 'Job not found' || message === 'HTTP 404') {
+          setSelectedJobId('')
+          setSelectedJob(null)
+          setJobResult(null)
+          setLastAutoExportedJobId('')
+          setProcessError('')
+          return
+        }
+
+        setProcessError(message)
       }
     }
 
@@ -383,7 +517,7 @@ export default function App() {
   function addTopic() {
     setSources((current) => [
       ...current,
-      { id: crypto.randomUUID(), topic: '', urls: [{ id: crypto.randomUUID(), value: '' }] },
+      createEmptySource(),
     ])
   }
 
@@ -392,7 +526,7 @@ export default function App() {
       current.map((group) => {
         if (group.id !== id) return group
         if (field === 'topic') return { ...group, topic: value }
-        return { ...group, urls: group.urls.map((url) => (url.id === field ? { ...url, value } : url)) }
+        return { ...group, urls: group.urls.map((url) => (url.id === field ? { ...url, ...value } : url)) }
       }),
     )
   }
@@ -401,7 +535,7 @@ export default function App() {
     setSources((current) =>
       current.map((group) =>
         group.id === topicId
-          ? { ...group, urls: [...group.urls, { id: crypto.randomUUID(), value: '' }] }
+          ? { ...group, urls: [...group.urls, { id: crypto.randomUUID(), value: '', enabled: true }] }
           : group,
       ),
     )
@@ -415,10 +549,84 @@ export default function App() {
     setSources((current) =>
       current.map((group) => {
         if (group.id !== topicId) return group
-        if (group.urls.length === 1) return { ...group, urls: [{ ...group.urls[0], value: '' }] }
+        if (group.urls.length === 1) return { ...group, urls: [{ ...group.urls[0], value: '', enabled: true }] }
         return { ...group, urls: group.urls.filter((url) => url.id !== urlId) }
       }),
     )
+  }
+
+  function exportConfigCsv() {
+    const rows = ['topic;url;enabled']
+
+    sources.forEach((group) => {
+      group.urls.forEach((url) => {
+        rows.push(
+          [
+            escapeCsvCell(group.topic.trim()),
+            escapeCsvCell(url.value.trim()),
+            escapeCsvCell(url.enabled === false ? 'false' : 'true'),
+          ].join(';'),
+        )
+      })
+    })
+
+    const blob = new Blob([`\uFEFF${rows.join('\r\n')}`], { type: 'text/csv;charset=utf-8;' })
+    const objectUrl = URL.createObjectURL(blob)
+    const link = document.createElement('a')
+    const stamp = new Date().toISOString().slice(0, 10)
+    link.href = objectUrl
+    link.download = `faq-config-${stamp}.csv`
+    document.body.appendChild(link)
+    link.click()
+    document.body.removeChild(link)
+    URL.revokeObjectURL(objectUrl)
+    setExportMessage('Configuracio exportada en CSV.')
+  }
+
+  function openConfigImporter() {
+    configImportInputRef.current?.click()
+  }
+
+  async function importConfigCsv(event) {
+    const file = event.target.files?.[0]
+    event.target.value = ''
+    if (!file) return
+
+    try {
+      const text = await file.text()
+      const importedRows = parseConfigCsv(text)
+      if (!importedRows.length) {
+        throw new Error('El CSV no conte cap topic ni URL per importar.')
+      }
+
+      const groupedSources = new Map()
+
+      importedRows.forEach(({ topic, url, enabled }) => {
+        const key = topic || '__EMPTY_TOPIC__'
+        const currentGroup = groupedSources.get(key) || {
+          id: crypto.randomUUID(),
+          topic,
+          urls: [],
+        }
+
+        currentGroup.urls.push({
+          id: crypto.randomUUID(),
+          value: url,
+          enabled,
+        })
+        groupedSources.set(key, currentGroup)
+      })
+
+      const nextSources = Array.from(groupedSources.values()).map((group) => ({
+        ...group,
+        urls: group.urls.length > 0 ? group.urls : [{ id: crypto.randomUUID(), value: '', enabled: true }],
+      }))
+
+      setSources(nextSources.length > 0 ? nextSources : [createEmptySource()])
+      setExportMessage(`Configuracio importada: ${nextSources.length} topics carregats.`)
+    } catch (error) {
+      setExportMessage(error instanceof Error ? error.message : 'No s’ha pogut importar el CSV de configuracio.')
+    }
   }
 
   async function startScrape() {
@@ -592,21 +800,36 @@ export default function App() {
   }
 
   const visibleLogs = [...(selectedJob?.logs || []), ...activityLogs]
-  const approvedRows = lastGeneratedCode.trim() ? lastGeneratedCode.split('\n').filter(Boolean).length : 0
   return (
     <div className="site-shell">
       <main className="app-shell">
         <section className="hero-banner">
           <div className="hero-copy">
-            <p className="hero-tag">Gestio interna de FAQs UPC</p>
+       
             <h1>Eina de gestió de preguntes freqüents de la UPC</h1>
             <p className="hero-text">
               Captura contingut des de webs UPC, revisa’l amb un flux clar i genera el codi HTML final amb una
               aparenca coherent amb l’ecosistema institucional.
             </p>
             <div className="hero-actions">
-              <button type="button" onClick={() => setActiveView('scrape')}>Descarregador de Preguntes Freqüents</button>
-              <button type="button" className="secondary" onClick={() => setActiveView('export')}>Generador de codi font</button>
+              <button
+                type="button"
+                className={`hero-cta ${activeView === 'scrape' ? 'active' : ''}`}
+                onClick={() => setActiveView('scrape')}
+              >
+                <span className="hero-cta-kicker">Captura</span>
+                <strong>Descarregador de Preguntes Frequents</strong>
+                <span className="hero-cta-copy">Prepara topics, URLs i envia el resultat directament a Google Sheets.</span>
+              </button>
+              <button
+                type="button"
+                className={`hero-cta ${activeView === 'export' ? 'active' : ''}`}
+                onClick={() => setActiveView('export')}
+              >
+                <span className="hero-cta-kicker">Publicacio</span>
+                <strong>Generador de codi font</strong>
+                <span className="hero-cta-copy">Converteix les files aprovades en HTML net i llest per Genweb.</span>
+              </button>
             </div>
           </div>
 
@@ -659,14 +882,29 @@ export default function App() {
 
         {activeView === 'scrape' && (
           <section className="content-grid scrape-layout">
-            <aside className="panel side-panel">
-              <img className="panel-icon google-badge" src={googleLogo} alt="" aria-hidden="true" />
-              <p>
-                Estat: <span className={`status ${googleSession?.connected ? 'done' : 'queued'}`}>{googleSession?.connected ? 'Connectada' : 'No connectada'}</span>
+            <aside className="panel side-panel google-session-panel">
+              {googleSession?.connected && googleSession?.profile_picture ? (
+                <img
+                  className="panel-icon google-avatar"
+                  src={googleSession.profile_picture}
+                  alt={googleProfileLabel}
+                  referrerPolicy="no-referrer"
+                />
+              ) : null}
+              {googleSession?.connected && (
+                <div className="google-profile-card">
+                  <strong>{googleProfileLabel}</strong>
+                  {googleSession?.profile_email && <span>{googleSession.profile_email}</span>}
+                </div>
+              )}
+              <p className={`google-status-row ${googleSession?.connected ? 'connected' : 'disconnected'}`}>
+                {!googleSession?.connected && <img className="panel-icon google-badge inline" src={googleLogo} alt="" aria-hidden="true" />}
+                <span className={`status ${googleSession?.connected ? 'done' : 'queued'}`}>{googleSession?.connected ? 'Connectat' : 'No connectat'}</span>
               </p>
               <div className="action-stack">
                 <button
                   type="button"
+                  className={googleSession?.connected ? 'google-session-button connected' : 'google-session-button'}
                   onClick={googleSession?.connected ? logoutGoogle : connectGoogle}
                   disabled={googleBusy}
                 >
@@ -675,15 +913,24 @@ export default function App() {
               </div>
               {googleSession?.connected && (
                 <div className="drive-browser-card">
-                  {!creatingNewSheet ? (
-                    <button type="button" className="secondary" onClick={() => (driveBrowserOpen ? setDriveBrowserOpen(false) : openDriveBrowser())} disabled={driveBusy}>
-                      {driveBrowserOpen ? 'Tancar explorador' : 'Explorar Drive'}
-                    </button>
-                  ) : (
-                    <button type="button" className="secondary" onClick={returnToDriveBrowser}>
-                      Tornar a Explorar Drive
-                    </button>
-                  )}
+                  <button
+                    type="button"
+                    className={driveBrowserOpen && !creatingNewSheet ? 'nav-pill active' : 'secondary'}
+                    onClick={() => {
+                      if (creatingNewSheet) {
+                        returnToDriveBrowser().catch(() => {})
+                        return
+                      }
+                      if (driveBrowserOpen) {
+                        setDriveBrowserOpen(false)
+                        return
+                      }
+                      openDriveBrowser().catch(() => {})
+                    }}
+                    disabled={driveBusy}
+                  >
+                    Explorar Drive
+                  </button>
 
                   <button type="button" className={creatingNewSheet ? 'nav-pill active' : 'nav-pill'} onClick={startCreatingNewSheet}>
                     Crear Nou Sheets
@@ -754,14 +1001,25 @@ export default function App() {
 
             <div className="main-stack">
               <article className="panel wide">
-                <div className="section-head">
+                <div className="section-head scrape-header">
                   <div className="title-with-icon">
                     <div className="title-row-inline">
                       <img className="section-illustration" src={downloadLogo} alt="" aria-hidden="true" />
                       <h2>Fonts i descàrrega</h2>
                     </div>
                   </div>
-                  <button type="button" className="secondary" onClick={addTopic}>Afegir topic</button>
+                  <div className="config-tools">
+                    <button type="button" className="secondary" onClick={exportConfigCsv}>Exportar configuracio CSV</button>
+                    <button type="button" className="secondary" onClick={openConfigImporter}>Importar configuracio CSV</button>
+                    <button type="button" className="secondary" onClick={addTopic}>Afegir topic</button>
+                    <input
+                      ref={configImportInputRef}
+                      className="sr-only-input"
+                      type="file"
+                      accept=".csv,text/csv"
+                      onChange={importConfigCsv}
+                    />
+                  </div>
                 </div>
 
                 <div className="topic-stack">
@@ -782,10 +1040,18 @@ export default function App() {
 
                       {group.urls.map((url) => (
                         <div key={url.id} className="url-row">
+                          <label className="url-toggle">
+                            <input
+                              type="checkbox"
+                              checked={url.enabled !== false}
+                              onChange={(event) => updateTopic(group.id, url.id, { enabled: event.target.checked })}
+                            />
+                            <span>{url.enabled !== false ? 'Activa' : 'Pausada'}</span>
+                          </label>
                           <input
                             type="url"
                             value={url.value}
-                            onChange={(event) => updateTopic(group.id, url.id, event.target.value)}
+                            onChange={(event) => updateTopic(group.id, url.id, { value: event.target.value })}
                             placeholder="https://web.upc.edu/pagina-faq"
                           />
                           <button type="button" className="ghost" onClick={() => removeUrl(group.id, url.id)}>Eliminar URL</button>
@@ -802,7 +1068,12 @@ export default function App() {
 
                 <div className="action-bar">
                   <button type="button" onClick={startScrape} disabled={submitting}>{submitting ? 'Executant...' : 'Descarregar FAQs'}</button>
-                  <p className="muted">{validSources.length} URLs valides {invalidSources.length > 0 ? `· ${invalidSources.length} no valides` : ''}</p>
+                  <p className="muted">
+                    {validSources.length} URLs valides
+                    {invalidSources.length > 0 ? ` · ${invalidSources.length} no valides` : ''}
+                    {enabledSourceCount > 0 ? ` · ${enabledSourceCount} actives` : ''}
+                    {disabledSourceCount > 0 ? ` · ${disabledSourceCount} desactivades` : ''}
+                  </p>
                 </div>
               </article>
 

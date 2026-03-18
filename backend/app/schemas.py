@@ -126,6 +126,9 @@ class GoogleSessionResponse(BaseModel):
     account_hint: str | None = None
     oauth_client_json: str | None = None
     oauth_client_found: bool | None = None
+    profile_name: str | None = None
+    profile_email: str | None = None
+    profile_picture: str | None = None
 
 
 class GoogleConnectResponse(BaseModel):
