@@ -194,6 +194,70 @@ def scrape_faqs(
         if faqs:
             return faqs
 
+    # Format 3b: accordion niat amb subtopics a nivell pare i FAQs a nivell fill
+    top_level_accordion = soup.select_one("#faqTopicAccordion")
+    if top_level_accordion:
+        top_buttons = top_level_accordion.select('button.accordion-button[data-bs-target^="#topic-"]')
+        if debug:
+            _log(f"DEBUG nested top-level accordion items: {len(top_buttons)}")
+
+        nested_faqs: List[Tuple[str, str] | Tuple[str, str, str]] = []
+        for top_btn in top_buttons:
+            group_title = re.sub(r"\s+", " ", top_btn.get_text(" ", strip=True)).strip()
+            target = (top_btn.get("data-bs-target") or "").strip()
+            if not target.startswith("#"):
+                continue
+
+            panel = top_level_accordion.select_one(target) or soup.select_one(target)
+            if not panel:
+                continue
+
+            nested_container = panel.find("div", class_="accordion")
+            nested_items = (
+                nested_container.find_all("div", class_="accordion-item", recursive=False)
+                if nested_container
+                else []
+            )
+            if not nested_items:
+                continue
+
+            for nested_item in nested_items:
+                q_btn = nested_item.select_one(":scope > h2 button.accordion-button")
+                if not q_btn:
+                    continue
+
+                question = _normalize_question(q_btn.get_text(" ", strip=True))
+                if not question:
+                    continue
+
+                nested_target = (q_btn.get("data-bs-target") or "").strip()
+                if not nested_target.startswith("#"):
+                    continue
+
+                nested_panel = (
+                    nested_item.select_one(nested_target)
+                    or panel.select_one(nested_target)
+                    or soup.select_one(nested_target)
+                )
+                if not nested_panel:
+                    continue
+
+                content_wrap = nested_panel.select_one(":scope > div")
+                content = content_wrap.select_one(":scope > div") if content_wrap else None
+                answer = _inner_html(content or content_wrap or nested_panel)
+                if not answer:
+                    answer = nested_panel.get_text(" ", strip=True)
+                if not answer:
+                    continue
+
+                if include_group:
+                    nested_faqs.append((group_title, question, answer))
+                else:
+                    nested_faqs.append((question, answer))
+
+        if nested_faqs:
+            return nested_faqs
+
     # Format 2: Bootstrap 5 accordion
     items = soup.select(".accordion-item")
     if debug:
@@ -250,6 +314,8 @@ def scrape_faqs(
         # Subformat normal: una pregunta al botó i una resposta al body
         q = q_btn.get_text(" ", strip=True) if q_btn else ""
         q = _normalize_question(q)
+        if a_body.select("button.accordion-button"):
+            continue
         a = _inner_html(a_body)
         if q and a:
             key = (group_title, q, a)

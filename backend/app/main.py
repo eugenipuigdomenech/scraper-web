@@ -8,6 +8,7 @@ import tempfile
 import threading
 import time
 from pathlib import Path
+import unicodedata
 
 from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
@@ -16,12 +17,9 @@ from starlette.middleware.sessions import SessionMiddleware
 
 from app.constants import SHEETS_COLUMNS
 from app.html_export import (
-    apply_default_subtopics,
     approved_rows_to_html,
     filter_approved,
-    normalize_row_dict,
-    render_genweb_accordion,
-    validate_subtopics,
+    render_upc_faqaccordion,
 )
 from app.job_manager import job_manager
 from app.schemas import (
@@ -57,6 +55,65 @@ from app.sheets import (
     logout_google_session,
     read_rows_from_sheets_oauth,
 )
+
+
+def _normalize_text(value: str) -> str:
+    txt = (value or "").strip().lower()
+    if not txt:
+        return ""
+    txt = unicodedata.normalize("NFKD", txt)
+    txt = "".join(ch for ch in txt if not unicodedata.combining(ch))
+    return txt
+
+
+def _row_value(row: dict[str, str], *names: str) -> str:
+    aliases = {_normalize_text(name) for name in names}
+    for key, value in row.items():
+        if _normalize_text(key) in aliases:
+            return (value or "").strip()
+    return ""
+
+
+def normalize_row_dict(row: dict[str, str]) -> dict[str, str]:
+    return {
+        "Tema": _row_value(row, "Tema", "topic", "Topic"),
+        "Subtopic": _row_value(row, "Subtopic", "Sub topic", "Subtema", "Sub tema", "Subtòpic", "Sub tòpic"),
+        "Pregunta": _row_value(row, "Pregunta", "question", "Question"),
+        "Resposta": _row_value(row, "Resposta", "answer", "Answer"),
+        "Estat": _row_value(row, "Estat", "estat", "status", "Status"),
+        "Font": _row_value(row, "Font", "source", "URL"),
+    }
+
+
+def apply_default_subtopics(rows: list[dict[str, str]], default_value: str = "-") -> list[dict[str, str]]:
+    normalized_rows: list[dict[str, str]] = []
+    for row in rows:
+        normalized = dict(row)
+        if not (normalized.get("Subtopic") or "").strip():
+            normalized["Subtopic"] = default_value
+        normalized_rows.append(normalized)
+    return normalized_rows
+
+
+def validate_subtopics(rows: list[dict[str, str]], require_for_approved: bool = True) -> None:
+    for index, row in enumerate(rows, start=1):
+        topic = (row.get("Tema") or "").strip()
+        question = (row.get("Pregunta") or "").strip()
+        answer = (row.get("Resposta") or "").strip()
+        if not topic or not question or not answer:
+            raise ValueError(f"La fila aprovada {index} té camps obligatoris buits.")
+
+
+def render_genweb_accordion(rows: list[dict[str, str]]) -> tuple[str, int]:
+    html_text = render_upc_faqaccordion(rows)
+    groups = {
+        ((row.get("Subtopic") or "").strip() if (row.get("Subtopic") or "").strip() not in {"-", "--", "–", "—"} else "")
+        or (row.get("Tema") or "").strip()
+        or "Preguntes frequents"
+        for row in rows
+    }
+    groups.discard("")
+    return html_text, len(groups) or 1
 
 app = FastAPI(title="Scraper Web API")
 

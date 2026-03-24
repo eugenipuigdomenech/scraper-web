@@ -1,189 +1,319 @@
-from __future__ import annotations
-
 import html
 import re
-from collections import OrderedDict
-from typing import Any
+import unicodedata
 
 from bs4 import BeautifulSoup
 
 
-APPROVED_VALUES = {"aprovat", "aprovada", "approved"}
+def _normalize_text(value: str) -> str:
+    txt = (value or "").strip().lower()
+    if not txt:
+        return ""
+    txt = unicodedata.normalize("NFKD", txt)
+    txt = "".join(ch for ch in txt if not unicodedata.combining(ch))
+    return txt
 
 
-def _clean_text(value: Any) -> str:
-    return str(value or "").strip()
+def _get_row_value_case_insensitive(row: dict[str, str], wanted_key: str) -> str:
+    wanted = _normalize_text(wanted_key)
+    aliases = {wanted}
+    if wanted == _normalize_text("Subtopic"):
+        aliases.update(
+            {
+                _normalize_text("Sub topic"),
+                _normalize_text("Subtema"),
+                _normalize_text("Sub tema"),
+                _normalize_text("Subtòpic"),
+                _normalize_text("Sub tòpic"),
+            }
+        )
+    for k, v in row.items():
+        if _normalize_text(k) in aliases:
+            return v or ""
+    return ""
 
 
-def _looks_like_html(text: str) -> bool:
-    t = _clean_text(text)
-    return "<" in t and ">" in t
-
-
-def _answer_to_html(answer: str) -> str:
-    if _looks_like_html(answer):
-        return answer.strip()
-
-    escaped = html.escape(_clean_text(answer))
-    escaped = escaped.replace("\r\n", "\n").replace("\r", "\n")
-    escaped = escaped.replace("\n\n", "<br /><br />")
-    return escaped.replace("\n", "<br />")
-
-
-def _answer_to_html_paragraph(answer: str) -> str:
-    return _answer_to_html(answer)
-
-
-def _slugify(value: str) -> str:
-    slug = re.sub(r"[^a-z0-9]+", "-", _clean_text(value).lower()).strip("-")
-    return slug or "bloc"
+def _normalize_subtopic(value: str) -> str:
+    text = (value or "").strip()
+    if text in {"-", "--", "–", "—"}:
+        return ""
+    return text
 
 
 def filter_approved(rows: list[dict[str, str]]) -> list[dict[str, str]]:
+    approved_values = {
+        "aprovat",
+        "aprovada",
+        "aprovat/da",
+        "aprobat",
+        "approved",
+        "ok",
+        "si",
+        "yes",
+        "true",
+        "1",
+    }
     out = []
-    for row in rows:
-        status = _clean_text(row.get("Estat") or row.get("estat")).lower()
-        if status in APPROVED_VALUES:
-            out.append(row)
+    for r in rows:
+        estat = _normalize_text(_get_row_value_case_insensitive(r, "estat"))
+        if estat in approved_values:
+            out.append(r)
     return out
 
 
-def normalize_row_dict(row: dict[str, Any]) -> dict[str, str]:
-    return {
-        "Tema": _clean_text(row.get("Tema") or row.get("topic") or row.get("Topic")),
-        "Subtopic": _clean_text(row.get("Subtopic") or row.get("subtopic") or row.get("Subtòpic")),
-        "Pregunta": _clean_text(row.get("Pregunta") or row.get("question") or row.get("Question")),
-        "Resposta": _clean_text(row.get("Resposta") or row.get("answer") or row.get("Answer")),
-        "Estat": _clean_text(row.get("Estat") or row.get("status") or row.get("Status")),
-        "Data creació": _clean_text(row.get("Data creació") or row.get("created_at")),
-        "Darrera modificació": _clean_text(row.get("Darrera modificació") or row.get("updated_at")),
-        "Persona darrera modificació": _clean_text(
-            row.get("Persona darrera modificació") or row.get("last_modified_by")
-        ),
-        "Dades amb actualització anual": _clean_text(
-            row.get("Dades amb actualització anual") or row.get("annual_update")
-        ),
-        "Font": _clean_text(row.get("Font") or row.get("source") or row.get("URL")),
-    }
+def _looks_like_html(text: str) -> bool:
+    t = (text or "").strip()
+    return "<" in t and ">" in t
 
 
-def approved_rows_to_records(rows: list[list[Any]]) -> list[dict[str, str]]:
-    records = []
-    for row in rows:
-        normalized = normalize_row_dict(
-            {
-                "Tema": row[0] if len(row) > 0 else "",
-                "Subtopic": row[1] if len(row) > 1 else "",
-                "Pregunta": row[2] if len(row) > 2 else "",
-                "Resposta": row[3] if len(row) > 3 else "",
-                "Estat": row[4] if len(row) > 4 else "Aprovat",
-                "Data creació": row[5] if len(row) > 5 else "",
-                "Darrera modificació": row[6] if len(row) > 6 else "",
-                "Persona darrera modificació": row[7] if len(row) > 7 else "",
-                "Dades amb actualització anual": row[8] if len(row) > 8 else "",
-                "Font": row[9] if len(row) > 9 else "",
-            }
-        )
-        records.append(normalized)
-    return records
+def _answer_to_html_paragraph(answer: str) -> str:
+    a = (answer or "").strip()
+    if _looks_like_html(a):
+        return a
 
-
-def apply_default_subtopics(rows: list[dict[str, str]], default_value: str = "-") -> list[dict[str, str]]:
-    normalized_rows: list[dict[str, str]] = []
-    for row in rows:
-        normalized = dict(row)
-        if not _clean_text(normalized.get("Subtopic")):
-            normalized["Subtopic"] = default_value
-        normalized_rows.append(normalized)
-    return normalized_rows
-
-
-def validate_subtopics(rows: list[dict[str, str]], require_for_approved: bool = True) -> None:
-    for index, row in enumerate(rows, start=1):
-        topic = _clean_text(row.get("Tema"))
-        question = _clean_text(row.get("Pregunta"))
-        answer = _clean_text(row.get("Resposta"))
-        if not topic or not question or not answer:
-            raise ValueError(f"La fila aprovada {index} té camps obligatoris buits.")
-
-
-
-def render_genweb_accordion(rows: list[dict[str, str]]) -> tuple[str, int]:
-    groups: "OrderedDict[str, list[dict[str, str]]]" = OrderedDict()
-    for row in rows:
-        topic = _clean_text(row.get("Tema"))
-        subtopic = _clean_text(row.get("Subtopic"))
-        group_label = subtopic or topic or "General"
-        groups.setdefault(group_label, []).append(row)
-
-    html_parts = ['<div class="upc-faq-export" data-upc-faq-export="true">']
-
-    for group_index, (group_name, items) in enumerate(groups.items(), start=1):
-        group_slug = _slugify(f"group-{group_index}-{group_name}")
-        html_parts.append(f'<section class="faq-group" data-group="{html.escape(group_slug)}">')
-        html_parts.append(f"<h3>{html.escape(group_name)}</h3>")
-        html_parts.append(f'<div class="faq-accordion" id="{html.escape(group_slug)}">')
-
-        for item_index, item in enumerate(items, start=1):
-            panel_id = f"{group_slug}-item-{item_index}"
-            question = _clean_text(item.get("Pregunta"))
-            answer_html = _answer_to_html(_clean_text(item.get("Resposta")))
-            source = _clean_text(item.get("Font"))
-
-            html_parts.append('<article class="faq-item">')
-            html_parts.append(
-                "<button "
-                f'class="faq-trigger" type="button" data-target="{html.escape(panel_id)}" '
-                'aria-expanded="false">'
-                f"<span>{html.escape(question)}</span>"
-                '<span class="faq-icon" aria-hidden="true">+</span>'
-                "</button>"
-            )
-            html_parts.append(f'<div class="faq-panel" id="{html.escape(panel_id)}" hidden>')
-            html_parts.append(f'<div class="faq-answer">{answer_html}</div>')
-            if source:
-                html_parts.append(
-                    f'<p class="faq-source"><a href="{html.escape(source)}" target="_blank" '
-                    f'rel="noreferrer">Font original</a></p>'
-                )
-            html_parts.append("</div>")
-            html_parts.append("</article>")
-
-        html_parts.append("</div>")
-        html_parts.append("</section>")
-
-    html_parts.append("</div>")
-    html_parts.append(
-        """<script>
-(function () {
-  const root = document.querySelector('[data-upc-faq-export="true"]');
-  if (!root) return;
-  root.querySelectorAll('.faq-trigger').forEach((button) => {
-    button.addEventListener('click', () => {
-      const targetId = button.getAttribute('data-target');
-      const panel = targetId ? root.querySelector('#' + CSS.escape(targetId)) : null;
-      if (!panel) return;
-      const isOpen = button.getAttribute('aria-expanded') === 'true';
-      button.setAttribute('aria-expanded', isOpen ? 'false' : 'true');
-      const icon = button.querySelector('.faq-icon');
-      if (icon) icon.textContent = isOpen ? '+' : '−';
-      panel.hidden = isOpen;
-    });
-  });
-})();
-</script>"""
-    )
-
-    return _prettify_export_html("\n".join(html_parts)), len(groups)
+    a = html.escape(a)
+    a = a.replace("\r\n", "\n").replace("\r", "\n")
+    a = a.replace("\n\n", "<br /><br />")
+    a = a.replace("\n", "<br />")
+    return a
 
 
 def render_upc_faqaccordion(items: list[dict[str, str]]) -> str:
-    html_text, _groups = render_genweb_accordion([normalize_row_dict(item) for item in items])
-    return html_text
+    def _grouped_by_topic(rows: list[dict[str, str]]) -> list[tuple[str, list[dict[str, str]]]]:
+        order: list[str] = []
+        grouped: dict[str, list[dict[str, str]]] = {}
+        for row in rows:
+            subtopic = _normalize_subtopic(_get_row_value_case_insensitive(row, "Subtopic"))
+            topic = _get_row_value_case_insensitive(row, "Tema").strip()
+            parent = subtopic or topic or "Preguntes frequents"
+            if parent not in grouped:
+                grouped[parent] = []
+                order.append(parent)
+            grouped[parent].append(row)
+        return [(t, grouped[t]) for t in order]
+
+    def _slug(text: str) -> str:
+        base = re.sub(r"\s+", "-", (text or "").strip().lower())
+        base = re.sub(r"[^a-z0-9-]", "", base)
+        base = re.sub(r"-{2,}", "-", base).strip("-")
+        return base or "topic"
+
+    def _append_question_items(
+        out_lines: list[str], topic_idx: int, topic_items: list[dict[str, str]], parent_id: str
+    ):
+        for item_idx, it in enumerate(topic_items, start=1):
+            q = (it.get("Pregunta") or "").strip()
+            a = (it.get("Resposta") or "").strip()
+            q_html = q if _looks_like_html(q) else html.escape(q)
+            a_html = _answer_to_html_paragraph(a)
+            qid = f"c{topic_idx}-{item_idx}"
+
+            out_lines.append(f"<!-- ITEM {topic_idx}.{item_idx} -->")
+            out_lines.append('<div class="accordion-item" style="border: 0; box-shadow: none; border-bottom: 1px solid #D1D1D1; background: transparent; border-radius: 0;">')
+            out_lines.append(
+                '<h2 style="padding: 0; margin: 0;">'
+                f'<button type="button" class="accordion-button collapsed" data-bs-toggle="collapse" data-bs-target="#{qid}" aria-expanded="false" aria-controls="{qid}" data-upc-faq-toggle="1" '
+                'style="width: 100%; text-align: left; font-size: 18px; background: transparent; padding: 30px 36px 30px 34px; '
+                'font-weight: 500; color: #00769d; position: relative; border: 0; border-top: 1px solid #D1D1D1; '
+                'box-shadow: none; cursor: pointer;">'
+                f"{q_html}"
+                "</button></h2>"
+            )
+            out_lines.append(
+                f'<div id="{qid}" class="collapse" data-bs-parent="#{parent_id}" '
+                'style="border-bottom: 1px solid #D1D1D1; margin-bottom: -1px; position: relative; z-index: 1; height: 0px; overflow: hidden; transition: height 350ms ease;">'
+            )
+            out_lines.append('<div style="border-top: 0; padding: 0 18px 18px; background: transparent;">')
+            out_lines.append(
+                '<div style="margin: 0; font-size: 16px; font-weight: 300; padding: 0px 0px 0px 16px; line-height: 1.45; color: #636363;">'
+                f"{a_html}</div>"
+            )
+            out_lines.append("</div></div></div>")
+
+    topic_blocks = _grouped_by_topic(items)
+    has_real_subtopic = any(
+        _normalize_subtopic(_get_row_value_case_insensitive(row, "Subtopic"))
+        for row in items
+    )
+
+    out: list[str] = []
+
+    if not has_real_subtopic and len(topic_blocks) == 1:
+        out.append('<div id="faqTopicAccordion" class="accordion" style="margin-bottom: 40px;">')
+        out.append('<div class="accordion-body" style="border-top: 0; padding: 0 0 12px; background: transparent;">')
+        out.append('<div id="faqAccordion-1" class="accordion" data-upc-faq-accordion="1">')
+        _append_question_items(out, 1, topic_blocks[0][1], "faqAccordion-1")
+        out.append("</div>")
+        out.append("</div>")
+        out.append("</div>")
+    else:
+        out.append('<div id="faqTopicAccordion" class="accordion" style="margin-bottom: 40px;">')
+
+        for topic_idx, (topic, topic_items) in enumerate(topic_blocks, start=1):
+            topic_id = f"topic-{topic_idx}-{_slug(topic)}"
+            inner_acc_id = f"faqAccordion-{topic_idx}"
+
+            out.append(f"<!-- TOPIC {topic_idx}: {html.escape(topic)} -->")
+            out.append('<div class="accordion-item" style="border: 0; box-shadow: none; border-bottom: 1px solid #D1D1D1; background: transparent; border-radius: 0;">')
+            out.append(
+                '<h2 style="padding: 0; margin: 0;">'
+                f'<button type="button" class="accordion-button collapsed" data-bs-toggle="collapse" data-bs-target="#{topic_id}" aria-expanded="false" aria-controls="{topic_id}" data-upc-faq-toggle="1" '
+                'style="width: 100%; text-align: left; font-size: 24px; background: transparent; padding: 30px 36px 30px 18px; '
+                'font-weight: 500; color: #4A4A4A; letter-spacing: .2px; position: relative; border: 0; border-top: 1px solid #D1D1D1; '
+                'box-shadow: none; cursor: pointer;">'
+                f"{html.escape(topic)}"
+                "</button></h2>"
+            )
+            out.append(
+                f'<div id="{topic_id}" class="collapse" data-bs-parent="#faqTopicAccordion" '
+                'style="border-bottom: 1px solid #D1D1D1; margin-bottom: -1px; position: relative; z-index: 1; height: 0px; overflow: hidden; transition: height 350ms ease;">'
+            )
+            out.append('<div style="border-top: 0; padding: 0 0 12px; background: transparent;">')
+            out.append(f'<div id="{inner_acc_id}" class="accordion" data-upc-faq-accordion="1">')
+            _append_question_items(out, topic_idx, topic_items, inner_acc_id)
+            out.append("</div>")
+            out.append("</div></div>")
+
+        out.append("</div>")
+    out.append("<p>")
+    out.append("<style>")
+    out.append(
+        """[data-upc-faq-toggle="1"]:focus { box-shadow: none !important; }
+[data-upc-faq-toggle="1"]::after {
+  content: "";
+  position: absolute;
+  right: 18px;
+  top: 50%;
+  width: 14px;
+  height: 14px;
+  border-right: 3px solid #00769d;
+  border-bottom: 3px solid #00769d;
+  background-image: none !important;
+  transform-origin: center;
+  transition: transform .25s ease !important;
+  transform: translateY(-65%) rotate(45deg) !important;
+}
+[data-upc-faq-toggle="1"][aria-expanded="true"]::after {
+  transform: translateY(-65%) rotate(225deg) !important;
+}
+[data-upc-faq-toggle="1"][aria-expanded="false"]::after {
+  transform: translateY(-65%) rotate(45deg) !important;
+}"""
+    )
+    out.append("</style>")
+    out.append("<script>")
+    out.append(
+        """(function () {
+  if (window.__upcFaqStandaloneInit) return;
+  window.__upcFaqStandaloneInit = true;
+
+  function initAccordion(acc) {
+    if (!acc || acc.dataset.upcFaqInit === '1') return;
+    acc.dataset.upcFaqInit = '1';
+
+    var collapses = Array.from(acc.querySelectorAll(':scope > .collapse, :scope > .accordion-item > .collapse'));
+    if (!collapses.length) {
+      collapses = Array.from(acc.querySelectorAll('.collapse')).filter(function (col) {
+        return col.getAttribute('data-bs-parent') === '#' + acc.id;
+      });
+    }
+
+    function btnFor(col) {
+      return acc.querySelector('[data-bs-target="#' + col.id + '"]');
+    }
+
+    function setStyles(col, isOpen) {
+      var btn = btnFor(col);
+        if (btn) {
+        btn.style.borderTopColor = isOpen ? '#00769D' : '#D1D1D1';
+        btn.setAttribute('aria-expanded', isOpen ? 'true' : 'false');
+        btn.classList.toggle('collapsed', !isOpen);
+      }
+      col.style.borderBottomColor = isOpen ? '#00769D' : '#D1D1D1';
+    }
+
+    function open(col) {
+      if (col.dataset.anim === '1') return;
+
+      collapses.forEach(function (other) {
+        if (other !== col) close(other);
+      });
+
+      col.dataset.anim = '1';
+      col.classList.add('showing');
+      col.style.height = '0px';
+
+      requestAnimationFrame(function () {
+        col.style.height = col.scrollHeight + 'px';
+        setStyles(col, true);
+      });
+
+      var done = function (e) {
+        if (e.propertyName !== 'height') return;
+        col.classList.remove('showing');
+        col.classList.add('show');
+        col.style.height = 'auto';
+        col.dataset.anim = '0';
+        col.removeEventListener('transitionend', done);
+      };
+      col.addEventListener('transitionend', done);
+    }
+
+    function close(col) {
+      if (col.dataset.anim === '1') return;
+      if (!col.classList.contains('show') && col.style.height === '0px') return;
+
+      col.dataset.anim = '1';
+      col.classList.remove('show');
+
+      col.style.height = col.scrollHeight + 'px';
+
+      requestAnimationFrame(function () {
+        col.style.height = '0px';
+        setStyles(col, false);
+      });
+
+      var done = function (e) {
+        if (e.propertyName !== 'height') return;
+        col.dataset.anim = '0';
+        col.removeEventListener('transitionend', done);
+      };
+      col.addEventListener('transitionend', done);
+    }
+
+    acc.querySelectorAll('button[data-bs-target]').forEach(function (btn) {
+      btn.addEventListener('click', function (e) {
+        e.preventDefault();
+        var sel = btn.getAttribute('data-bs-target');
+        var col = sel ? document.querySelector(sel) : null;
+        if (!col) return;
+
+        var isOpen = col.classList.contains('show') || col.style.height === 'auto';
+        if (isOpen) close(col);
+        else open(col);
+      });
+    });
+
+    collapses.forEach(function (col) {
+      col.style.overflow = 'hidden';
+      col.style.transition = 'height 350ms ease';
+      col.style.height = '0px';
+      col.classList.remove('show');
+      setStyles(col, false);
+    });
+  }
+
+  document.querySelectorAll('#faqTopicAccordion, [id^="faqAccordion-"]').forEach(initAccordion);
+})();"""
+    )
+    out.append("</script>")
+    out.append("</p>")
+
+    return _prettify_export_html("\n".join(out))
 
 
 def _prettify_export_html(text: str) -> str:
-    raw = _clean_text(text)
+    raw = (text or "").strip()
     if not raw:
         return ""
     try:
@@ -192,17 +322,33 @@ def _prettify_export_html(text: str) -> str:
         return raw
 
 
-def approved_rows_to_html(approved_rows: list[list[Any]], log=None) -> tuple[str, int]:
-    def _log(message: str) -> None:
+def export_text(output_path: str, text: str):
+    with open(output_path, "w", encoding="utf-8") as f:
+        f.write(text)
+
+
+def approved_rows_to_html(approved_rows, log=None):
+    def _log(m):
         if log:
-            log(message)
+            log(m)
 
-    records = apply_default_subtopics(approved_rows_to_records(approved_rows))
-    _log(f"Generant HTML per {len(records)} FAQs aprovades.")
-    validate_subtopics(records, require_for_approved=False)
-    return render_genweb_accordion(records)
+    _log(f"Generant HTML per {len(approved_rows)} FAQs aprovades (UI)...")
 
+    items = []
+    for row in approved_rows:
+        topic = row[0] if len(row) > 0 else ""
+        subtopic = row[1] if len(row) > 1 else ""
+        question = row[2] if len(row) > 2 else ""
+        answer = row[3] if len(row) > 3 else ""
+        source = row[4] if len(row) > 4 else ""
+        items.append(
+            {
+                "Tema": topic,
+                "Subtopic": subtopic,
+                "Pregunta": question,
+                "Resposta": answer,
+                "Font": source,
+            }
+        )
 
-def export_text(output_path: str, text: str) -> None:
-    with open(output_path, "w", encoding="utf-8") as handle:
-        handle.write(text)
+    return render_upc_faqaccordion(items)
