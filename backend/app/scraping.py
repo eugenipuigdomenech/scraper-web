@@ -343,8 +343,7 @@ def build_outputs(
             _log(f"    FAQs found: {len(faqs)}")
             ok_urls += 1
 
-            subtopic_counts: Dict[str, int] = {}
-
+            block_items: List[Dict[str, str]] = []
             for faq in faqs:
                 group_title = ""
                 if len(faq) == 3:
@@ -355,8 +354,6 @@ def build_outputs(
                 subtopic = (group_title or "").strip()
                 if subtopic == parent_topic:
                     subtopic = ""
-                subtopic = subtopic or "-"
-                subtopic_counts[subtopic] = subtopic_counts.get(subtopic, 0) + 1
                 out_rows.append(
                     [
                         parent_topic,
@@ -371,23 +368,20 @@ def build_outputs(
                         url,
                     ]
                 )
-
-            if subtopic_counts:
-                summary = ", ".join(f"{name}: {count}" for name, count in subtopic_counts.items())
-                _log(f"    Subtopics detectats: {summary}")
+                block_items.append(
+                    {
+                        "topic": parent_topic,
+                        "subtopic": subtopic,
+                        "q": pregunta.strip(),
+                        "a": resposta.strip(),
+                    }
+                )
 
             genweb_blocks.append(
                 {
                     "topic": topic,
                     "source_url": url,
-                    "items": [
-                        {
-                            "subtopic": (((faq[0] if len(faq) == 3 else "") or "").strip() or "-") if isinstance(faq, tuple) else "-",
-                            "q": (faq[1] if len(faq) == 3 else faq[0]).strip(),
-                            "a": (faq[2] if len(faq) == 3 else faq[1]).strip(),
-                        }
-                        for faq in faqs
-                    ],
+                    "items": block_items,
                 }
             )
 

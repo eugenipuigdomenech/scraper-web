@@ -1,7 +1,8 @@
 ﻿import { useEffect, useMemo, useState } from 'react'
 import './App.css'
 import { useRef } from 'react'
-import upcRoundLogo from './assets/upc_logo.png'
+import upcRoundLogo from './assets/upc_logo_2.png'
+import upcFooterLogo from './assets/upc_logo.png'
 import homeLogo from './assets/home_logo.png'
 import faqsLogo from './assets/faqs1_logo.png'
 import downloadLogo from './assets/download.png'
@@ -26,9 +27,7 @@ const defaultState = {
   sources: defaultSources,
   debug: false,
   downloadSheetTitle: 'FAQs UPC',
-  downloadWorksheetName: 'Tab1',
-  generatorMode: 'csv',
-  generatorSheetTitle: 'FAQs UPC',
+  downloadWorksheetName: 'FAQs',
   generatorSheetTab: 'Revisio',
   lastGeneratedCode: '',
   lastSelectedJobId: '',
@@ -208,12 +207,9 @@ export default function App() {
   const [debug] = useState(persisted.debug)
   const [downloadSheetTitle, setDownloadSheetTitle] = useState(persisted.downloadSheetTitle)
   const [downloadWorksheetName, setDownloadWorksheetName] = useState(persisted.downloadWorksheetName)
-  const [generatorMode, setGeneratorMode] = useState(persisted.generatorMode)
-  const [generatorSheetTitle, setGeneratorSheetTitle] = useState(persisted.generatorSheetTitle)
   const [lastGeneratedCode, setLastGeneratedCode] = useState(persisted.lastGeneratedCode)
   const [selectedJobId, setSelectedJobId] = useState(persisted.lastSelectedJobId)
 
-  const [generatorCsvFile, setGeneratorCsvFile] = useState(null)
   const [_JOBS, setJobs] = useState([])
   const [selectedJob, setSelectedJob] = useState(null)
   const [jobResult, setJobResult] = useState(null)
@@ -235,6 +231,10 @@ export default function App() {
   const [submitting, setSubmitting] = useState(false)
   const [downloadBusy, setDownloadBusy] = useState(false)
   const [generatorBusy, setGeneratorBusy] = useState(false)
+  const [generatorProgress, setGeneratorProgress] = useState(0)
+  const [generatorCompleted, setGeneratorCompleted] = useState(false)
+  const [scrapeVisualProgress, setScrapeVisualProgress] = useState(0)
+  const [copyFeedbackVisible, setCopyFeedbackVisible] = useState(false)
   const [googleBusy, setGoogleBusy] = useState(false)
   const [lastAutoExportedJobId, setLastAutoExportedJobId] = useState('')
 
@@ -274,8 +274,6 @@ export default function App() {
         debug,
         downloadSheetTitle,
         downloadWorksheetName,
-        generatorMode,
-        generatorSheetTitle,
         lastGeneratedCode,
         lastSelectedJobId: selectedJobId,
       }),
@@ -286,11 +284,24 @@ export default function App() {
     debug,
     downloadSheetTitle,
     downloadWorksheetName,
-    generatorMode,
-    generatorSheetTitle,
     lastGeneratedCode,
     selectedJobId,
   ])
+
+  useEffect(() => {
+    if (!generatorBusy) return undefined
+
+    setGeneratorProgress(8)
+    const timer = window.setInterval(() => {
+      setGeneratorProgress((current) => {
+        if (current >= 92) return current
+        const step = current < 40 ? 9 : (current < 70 ? 5 : 2)
+        return Math.min(current + step, 92)
+      })
+    }, 260)
+
+    return () => window.clearInterval(timer)
+  }, [generatorBusy])
 
   async function loadJobs() {
     const response = await apiFetch(`${API_BASE}/api/jobs`)
@@ -333,10 +344,10 @@ export default function App() {
       if (!response.ok) throw new Error(data?.detail || `HTTP ${response.status}`)
       const worksheetNames = data.worksheets || []
       setSelectedDriveWorksheets(worksheetNames)
-      setDownloadWorksheetName(worksheetNames[0] || 'Tab1')
+      setDownloadWorksheetName(worksheetNames[0] || 'FAQs')
     } catch (error) {
       setSelectedDriveWorksheets([])
-      setDownloadWorksheetName('Tab1')
+      setDownloadWorksheetName('FAQs')
       setExportMessage(error instanceof Error ? error.message : 'No s’han pogut carregar les pestanyes del Google Sheet.')
     }
   }
@@ -361,7 +372,6 @@ export default function App() {
 
   function selectDriveSheet(item) {
     setDownloadSheetTitle(item.name)
-    setGeneratorSheetTitle(item.name)
     setSelectedDriveSheet(item)
     setCreatingNewSheet(false)
     loadSpreadsheetWorksheets(item.id).catch(() => {})
@@ -381,7 +391,7 @@ export default function App() {
     setSelectedDriveSheet(null)
     setSelectedDriveWorksheets([])
     setDownloadSheetTitle('')
-    setDownloadWorksheetName('Tab1')
+    setDownloadWorksheetName('FAQs')
     appendActivityLog('Mode de creacio de nou Google Sheet activat')
   }
 
@@ -644,6 +654,7 @@ export default function App() {
     }
 
     setSubmitting(true)
+    setScrapeVisualProgress(8)
     try {
       const response = await apiFetch(`${API_BASE}/api/jobs/scrape`, {
         method: 'POST',
@@ -710,7 +721,7 @@ export default function App() {
     }
 
     setDownloadBusy(true)
-    appendActivityLog(`Exportant FAQs a Google Sheets: ${downloadSheetTitle.trim()} / ${creatingNewSheet ? 'Tab1' : (downloadWorksheetName.trim() || 'Tab1')}`)
+    appendActivityLog(`Exportant FAQs a Google Sheets: ${downloadSheetTitle.trim()} / ${creatingNewSheet ? 'FAQs' : (downloadWorksheetName.trim() || 'FAQs')}`)
     try {
       const response = await apiFetch(`${API_BASE}/api/jobs/${selectedJobId}/export/sheets`, {
         method: 'POST',
@@ -718,7 +729,7 @@ export default function App() {
         body: JSON.stringify({
           spreadsheet_title: downloadSheetTitle.trim(),
           spreadsheet_id: selectedDriveSheet?.id || undefined,
-          worksheet_name: creatingNewSheet ? 'Tab1' : (downloadWorksheetName.trim() || 'Tab1'),
+          worksheet_name: creatingNewSheet ? 'FAQs' : (downloadWorksheetName.trim() || 'FAQs'),
         }),
       })
       const data = await response.json().catch(() => null)
@@ -738,27 +749,23 @@ export default function App() {
   async function generateHtmlFromExternalSource() {
     setExportMessage('')
     const formData = new FormData()
-    formData.append('input_mode', generatorMode)
+    formData.append('input_mode', 'sheets_oauth')
 
-    if (generatorMode === 'csv') {
-      if (!generatorCsvFile) {
-        setExportMessage('Selecciona un fitxer CSV revisat.')
-        return
-      }
-      if (!generatorCsvFile.name.toLowerCase().endsWith('.csv')) {
-        setExportMessage('El fitxer seleccionat ha de ser CSV.')
-        return
-      }
-      formData.append('csv_file', generatorCsvFile)
-    } else {
-      if (!generatorSheetTitle.trim()) {
-        setExportMessage('Indica el títol del Google Sheet.')
-        return
-      }
-      formData.append('spreadsheet_title', generatorSheetTitle.trim())
-      formData.append('worksheet_name', 'Tab1')
+    if (!googleSession?.connected) {
+      setExportMessage('Inicia sessio amb Google per generar l’HTML des del Sheet seleccionat.')
+      return
     }
 
+    if (!downloadSheetTitle.trim()) {
+      setExportMessage('Selecciona o crea un Google Sheet des del panell de l’esquerra.')
+      return
+    }
+
+    formData.append('spreadsheet_title', downloadSheetTitle.trim())
+    formData.append('worksheet_name', creatingNewSheet ? 'FAQs' : (downloadWorksheetName.trim() || 'FAQs'))
+
+    setGeneratorCompleted(false)
+    setGeneratorProgress(0)
     setGeneratorBusy(true)
     try {
       const response = await apiFetch(`${API_BASE}/api/export/html-from-source`, {
@@ -768,11 +775,17 @@ export default function App() {
       const data = await response.json().catch(() => null)
       if (!response.ok) throw new Error(data?.detail || `HTTP ${response.status}`)
       setLastGeneratedCode(data.html_text || '')
+      setGeneratorProgress(100)
+      setGeneratorCompleted(true)
       setExportMessage(`HTML generat amb ${data.approved_rows} files aprovades i ${data.groups} grups.`)
     } catch (error) {
+      setGeneratorCompleted(false)
+      setGeneratorProgress(0)
       setExportMessage(error instanceof Error ? error.message : 'No s’ha pogut generar el HTML.')
     } finally {
-      setGeneratorBusy(false)
+      window.setTimeout(() => {
+        setGeneratorBusy(false)
+      }, 220)
     }
   }
 
@@ -783,8 +796,11 @@ export default function App() {
     }
     try {
       await navigator.clipboard.writeText(lastGeneratedCode)
+      setCopyFeedbackVisible(true)
+      window.setTimeout(() => setCopyFeedbackVisible(false), 1800)
       setExportMessage('Codi HTML copiat al porta-retalls.')
     } catch {
+      setCopyFeedbackVisible(false)
       setExportMessage('No s’ha pogut copiar el codi.')
     }
   }
@@ -796,10 +812,185 @@ export default function App() {
   if (selectedJob?.status === 'running' && expectsAutoExport) {
     progressPercent = Math.min(scrapeProgressPercent, 88)
   } else if (selectedJob?.status === 'done' && expectsAutoExport) {
-    progressPercent = lastAutoExportedJobId === selectedJobId ? 100 : (downloadBusy ? 94 : 90)
+    progressPercent = lastAutoExportedJobId === selectedJobId ? 100 : (downloadBusy ? 96 : 90)
   }
 
+  const isScrapeCompleted = Boolean(
+    selectedJobId
+    && selectedJob?.status === 'done'
+    && (!expectsAutoExport || lastAutoExportedJobId === selectedJobId),
+  )
+  const isScrapeBusy = Boolean(
+    submitting
+    || (selectedJobId && selectedJob?.status !== 'error' && !isScrapeCompleted),
+  )
+  const showScrapeInlineProgress = submitting || Boolean(selectedJobId && selectedJob?.status !== 'error')
+  const scrapeInlineProgress = Math.round(scrapeVisualProgress)
   const visibleLogs = [...(selectedJob?.logs || []), ...activityLogs]
+  const allowNewSheetCreation = activeView === 'scrape'
+  const isCreatingSheetHere = allowNewSheetCreation && creatingNewSheet
+  const isGoogleConnected = Boolean(googleSession?.connected)
+
+  useEffect(() => {
+    if (!showScrapeInlineProgress) {
+      setScrapeVisualProgress(0)
+      return
+    }
+
+    const targetProgress = submitting && !selectedJob ? Math.max(progressPercent, 8) : progressPercent
+
+    const timer = window.setInterval(() => {
+      setScrapeVisualProgress((current) => {
+        if (current === targetProgress) return current
+        if (current > targetProgress) return targetProgress
+
+        const difference = targetProgress - current
+        const step = targetProgress >= 100 ? Math.max(1, Math.ceil(difference / 4)) : Math.max(1, Math.ceil(difference / 7))
+        return Math.min(current + step, targetProgress)
+      })
+    }, 90)
+
+    return () => window.clearInterval(timer)
+  }, [showScrapeInlineProgress, submitting, selectedJob, progressPercent])
+
+  const googleSessionPanel = (
+    <aside className="panel side-panel google-session-panel">
+      {googleSession?.connected && googleSession?.profile_picture ? (
+        <img
+          className="panel-icon google-avatar"
+          src={googleSession.profile_picture}
+          alt={googleProfileLabel}
+          referrerPolicy="no-referrer"
+        />
+      ) : null}
+      {googleSession?.connected && (
+        <div className="google-profile-card">
+          <strong>{googleProfileLabel}</strong>
+          {googleSession?.profile_email && <span>{googleSession.profile_email}</span>}
+        </div>
+      )}
+      {googleSession?.connected ? (
+        <div className="google-status-actions">
+          <p className="google-status-row connected">
+            <span className="status done">Connectat</span>
+          </p>
+          <button
+            type="button"
+            className="google-session-button compact"
+            onClick={logoutGoogle}
+            disabled={googleBusy}
+          >
+            {googleBusy ? 'Tancant sessio...' : 'Tancar sessio'}
+          </button>
+        </div>
+      ) : (
+        <>
+          <p className="google-status-row disconnected">
+            <img className="panel-icon google-badge inline" src={googleLogo} alt="" aria-hidden="true" />
+            <span className="status queued">No connectat</span>
+          </p>
+          <div className="action-stack">
+            <button
+              type="button"
+              className="google-session-button"
+              onClick={connectGoogle}
+              disabled={googleBusy}
+            >
+              {googleBusy ? 'Connectant...' : 'Iniciar sessio amb Google'}
+            </button>
+          </div>
+        </>
+      )}
+      {googleSession?.connected && (
+        <div className="drive-browser-card">
+          <button
+            type="button"
+            className={driveBrowserOpen && !isCreatingSheetHere ? 'nav-pill active' : 'secondary'}
+            onClick={() => {
+              if (isCreatingSheetHere) {
+                returnToDriveBrowser().catch(() => {})
+                return
+              }
+              if (driveBrowserOpen) {
+                setDriveBrowserOpen(false)
+                return
+              }
+              openDriveBrowser().catch(() => {})
+            }}
+            disabled={driveBusy}
+          >
+            Explorar Drive
+          </button>
+
+          {allowNewSheetCreation && (
+            <button type="button" className={creatingNewSheet ? 'nav-pill active' : 'nav-pill'} onClick={startCreatingNewSheet}>
+              Crear Nou Sheets
+            </button>
+          )}
+
+          {isCreatingSheetHere ? (
+            <label className="field">
+              <span>Titol del nou Google Sheet</span>
+              <input type="text" value={downloadSheetTitle} onChange={(event) => setDownloadSheetTitle(event.target.value)} />
+            </label>
+          ) : (
+            <>
+              {selectedDriveSheet && (
+                <div className="selected-sheet-card">
+                  <span className="drive-item-kind">Sheet seleccionat</span>
+                  <strong>{selectedDriveSheet.name}</strong>
+                  {selectedDriveWorksheets.length > 0 && (
+                    <label className="field worksheet-picker">
+                      <span>Pestanya</span>
+                      <select value={downloadWorksheetName} onChange={(event) => setDownloadWorksheetName(event.target.value)}>
+                        {selectedDriveWorksheets.map((worksheet) => (
+                          <option key={worksheet} value={worksheet}>
+                            {worksheet}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                  )}
+                </div>
+              )}
+
+              {driveBrowserOpen && (
+                <div className="drive-browser-body">
+                  <div className="drive-breadcrumbs">
+                    {driveStack.map((crumb, index) => (
+                      <button key={`${crumb.id || 'root'}-${index}`} type="button" className="drive-crumb" onClick={() => navigateDriveTo(index)} disabled={driveBusy}>
+                        {crumb.name}
+                      </button>
+                    ))}
+                  </div>
+
+                  <div className="drive-list">
+                    {driveBusy ? (
+                      <p className="muted">Carregant elements de Drive...</p>
+                    ) : driveItems.length > 0 ? (
+                      driveItems.map((item) => (
+                        <button
+                          key={item.id}
+                          type="button"
+                          className={`drive-item ${item.kind} ${selectedDriveSheet?.id === item.id ? 'selected' : ''}`}
+                          onClick={() => (item.kind === 'folder' ? openDriveFolder(item) : selectDriveSheet(item))}
+                        >
+                          <span className="drive-item-kind">{item.kind === 'folder' ? 'Carpeta' : 'Sheet'}</span>
+                          <strong>{item.name}</strong>
+                        </button>
+                      ))
+                    ) : (
+                      <p className="muted">No hi ha carpetes ni Google Sheets en aquesta ubicació.</p>
+                    )}
+                  </div>
+                </div>
+              )}
+            </>
+          )}
+        </div>
+      )}
+    </aside>
+  )
   return (
     <div className="site-shell">
       <main className="app-shell">
@@ -835,13 +1026,8 @@ export default function App() {
 
           <aside className="hero-aside">
             <img className="hero-roundel" src={upcRoundLogo} alt="UPC" />
-            <div className="hero-note">Universitat publica</div>
-            <div className="hero-note alt">R+D+I</div>
-            <div className="hero-card">
-              <span className="hero-kicker">Flux</span>
-              <strong>Scraping + revisio + Genweb</strong>
-              <p>Una interfície de treball amb llenguatge visual molt proper a UPC.</p>
-            </div>
+            <div className="hero-note">Gestio de FAQs</div>
+            <div className="hero-note alt">Captura i publicacio</div>
           </aside>
         </section>
 
@@ -882,131 +1068,14 @@ export default function App() {
 
         {activeView === 'scrape' && (
           <section className="content-grid scrape-layout">
-            <aside className="panel side-panel google-session-panel">
-              {googleSession?.connected && googleSession?.profile_picture ? (
-                <img
-                  className="panel-icon google-avatar"
-                  src={googleSession.profile_picture}
-                  alt={googleProfileLabel}
-                  referrerPolicy="no-referrer"
-                />
-              ) : null}
-              {googleSession?.connected && (
-                <div className="google-profile-card">
-                  <strong>{googleProfileLabel}</strong>
-                  {googleSession?.profile_email && <span>{googleSession.profile_email}</span>}
-                </div>
-              )}
-              <p className={`google-status-row ${googleSession?.connected ? 'connected' : 'disconnected'}`}>
-                {!googleSession?.connected && <img className="panel-icon google-badge inline" src={googleLogo} alt="" aria-hidden="true" />}
-                <span className={`status ${googleSession?.connected ? 'done' : 'queued'}`}>{googleSession?.connected ? 'Connectat' : 'No connectat'}</span>
-              </p>
-              <div className="action-stack">
-                <button
-                  type="button"
-                  className={googleSession?.connected ? 'google-session-button connected' : 'google-session-button'}
-                  onClick={googleSession?.connected ? logoutGoogle : connectGoogle}
-                  disabled={googleBusy}
-                >
-                  {googleBusy ? (googleSession?.connected ? 'Tancant sessio...' : 'Connectant...') : (googleSession?.connected ? 'Tancar sessio' : 'Iniciar sessio amb Google')}
-                </button>
-              </div>
-              {googleSession?.connected && (
-                <div className="drive-browser-card">
-                  <button
-                    type="button"
-                    className={driveBrowserOpen && !creatingNewSheet ? 'nav-pill active' : 'secondary'}
-                    onClick={() => {
-                      if (creatingNewSheet) {
-                        returnToDriveBrowser().catch(() => {})
-                        return
-                      }
-                      if (driveBrowserOpen) {
-                        setDriveBrowserOpen(false)
-                        return
-                      }
-                      openDriveBrowser().catch(() => {})
-                    }}
-                    disabled={driveBusy}
-                  >
-                    Explorar Drive
-                  </button>
-
-                  <button type="button" className={creatingNewSheet ? 'nav-pill active' : 'nav-pill'} onClick={startCreatingNewSheet}>
-                    Crear Nou Sheets
-                  </button>
-
-                  {creatingNewSheet ? (
-                    <label className="field">
-                      <span>Titol del nou Google Sheet</span>
-                      <input type="text" value={downloadSheetTitle} onChange={(event) => setDownloadSheetTitle(event.target.value)} />
-                    </label>
-                  ) : (
-                    <>
-                      {selectedDriveSheet && (
-                        <div className="selected-sheet-card">
-                          <span className="drive-item-kind">Sheet seleccionat</span>
-                          <strong>{selectedDriveSheet.name}</strong>
-                          {selectedDriveWorksheets.length > 0 && (
-                            <label className="field worksheet-picker">
-                              <span>Pestanya</span>
-                              <select value={downloadWorksheetName} onChange={(event) => setDownloadWorksheetName(event.target.value)}>
-                                {selectedDriveWorksheets.map((worksheet) => (
-                                  <option key={worksheet} value={worksheet}>
-                                    {worksheet}
-                                  </option>
-                                ))}
-                              </select>
-                            </label>
-                          )}
-                        </div>
-                      )}
-
-                      {driveBrowserOpen && (
-                        <div className="drive-browser-body">
-                          <div className="drive-breadcrumbs">
-                            {driveStack.map((crumb, index) => (
-                              <button key={`${crumb.id || 'root'}-${index}`} type="button" className="drive-crumb" onClick={() => navigateDriveTo(index)} disabled={driveBusy}>
-                                {crumb.name}
-                              </button>
-                            ))}
-                          </div>
-
-                          <div className="drive-list">
-                            {driveBusy ? (
-                              <p className="muted">Carregant elements de Drive...</p>
-                            ) : driveItems.length > 0 ? (
-                              driveItems.map((item) => (
-                                <button
-                                  key={item.id}
-                                  type="button"
-                                  className={`drive-item ${item.kind} ${selectedDriveSheet?.id === item.id ? 'selected' : ''}`}
-                                  onClick={() => (item.kind === 'folder' ? openDriveFolder(item) : selectDriveSheet(item))}
-                                >
-                                  <span className="drive-item-kind">{item.kind === 'folder' ? 'Carpeta' : 'Sheet'}</span>
-                                  <strong>{item.name}</strong>
-                                </button>
-                              ))
-                            ) : (
-                              <p className="muted">No hi ha carpetes ni Google Sheets en aquesta ubicació.</p>
-                            )}
-                          </div>
-                        </div>
-                      )}
-                    </>
-                  )}
-                </div>
-              )}
-            </aside>
+            {googleSessionPanel}
 
             <div className="main-stack">
               <article className="panel wide">
                 <div className="section-head scrape-header">
-                  <div className="title-with-icon">
-                    <div className="title-row-inline">
-                      <img className="section-illustration" src={downloadLogo} alt="" aria-hidden="true" />
-                      <h2>Fonts i descàrrega</h2>
-                    </div>
+                  <div className="title-row-inline">
+                    <img className="section-illustration" src={downloadLogo} alt="" aria-hidden="true" />
+                    <h2>Fonts i descàrrega</h2>
                   </div>
                   <div className="config-tools">
                     <button type="button" className="secondary" onClick={exportConfigCsv}>Exportar configuracio CSV</button>
@@ -1067,7 +1136,26 @@ export default function App() {
                 </div>
 
                 <div className="action-bar">
-                  <button type="button" onClick={startScrape} disabled={submitting}>{submitting ? 'Executant...' : 'Descarregar FAQs'}</button>
+                  <div className="action-inline-group">
+                    {isGoogleConnected ? (
+                      <>
+                        <button type="button" onClick={startScrape} disabled={isScrapeBusy}>{isScrapeBusy ? 'Descarregant...' : 'Descarregar FAQs'}</button>
+                        {showScrapeInlineProgress && (
+                          <div className="mini-progress-row">
+                            <div className="mini-progress" aria-live="polite" aria-label={`Descarregant FAQs, ${scrapeInlineProgress}%`}>
+                              <div className="mini-progress-bar">
+                                <span style={{ width: `${scrapeInlineProgress}%` }} />
+                              </div>
+                              <strong>{`${scrapeInlineProgress}%`}</strong>
+                            </div>
+                            {scrapeInlineProgress >= 100 && <span className="progress-complete-label">Completat</span>}
+                          </div>
+                        )}
+                      </>
+                    ) : (
+                      <p className="scrape-login-warning">No has iniciat sessio de Google. Connecta&apos;t per descarregar FAQs.</p>
+                    )}
+                  </div>
                   <p className="muted">
                     {validSources.length} URLs valides
                     {invalidSources.length > 0 ? ` · ${invalidSources.length} no valides` : ''}
@@ -1077,84 +1165,106 @@ export default function App() {
                 </div>
               </article>
 
-              <article className="panel wide">
-                <div className="progress-shell">
-                  <div className="progress-bar"><span style={{ width: `${progressPercent}%` }} /></div>
-                  <strong>{progressPercent}%</strong>
-                </div>
+              {isGoogleConnected && (
+                <article className="panel wide">
+                  {jobResult && (
+                    <div className="summary-grid">
+                      <div>URLs processades: {jobResult.stats?.total_urls ?? 0}</div>
+                      <div>FAQs trobades: {jobResult.stats?.total_faqs ?? 0}</div>
+                      <div>Files generades: {jobResult.stats?.total_rows ?? 0}</div>
+                      <div>Errors: {jobResult.stats?.total_errors ?? 0}</div>
+                    </div>
+                  )}
 
-                {jobResult && (
-                  <div className="summary-grid">
-                    <div>URLs processades: {jobResult.stats?.total_urls ?? 0}</div>
-                    <div>FAQs trobades: {jobResult.stats?.total_faqs ?? 0}</div>
-                    <div>Files generades: {jobResult.stats?.total_rows ?? 0}</div>
-                    <div>Errors: {jobResult.stats?.total_errors ?? 0}</div>
-                  </div>
-                )}
-
-                <pre>{visibleLogs.join('\n') || 'Sense logs encara.'}</pre>
-              </article>
+                  <pre>{visibleLogs.join('\n') || 'Sense logs encara.'}</pre>
+                </article>
+              )}
             </div>
           </section>
         )}
 
         {activeView === 'export' && (
           <section className="content-grid export-layout">
-            <aside className="panel side-panel">
-              <h3>Recordatori</h3>
-              <p className="muted">Nomes s’utilitzen les files amb estat `Aprovat`.</p>
-              <p className="muted">Si falta `Subtopic`, el sistema hi posara `-` per defecte.</p>
-            </aside>
+            <div className="sidebar-stack">
+              {googleSessionPanel}
+              <aside className="panel side-panel">
+                <h3>Recordatori</h3>
+                <p className="muted">Nomes s’utilitzen les files amb estat `Aprovat`.</p>
+                <p className="muted">Si falta `Subtopic`, el sistema hi posara `-` per defecte.</p>
+              </aside>
+            </div>
 
-            <article className="panel">
-              <div className="section-head">
-                <div className="title-with-icon">
-                  <div className="title-row-inline">
-                    <img className="section-illustration" src={htmlLogo} alt="" aria-hidden="true" />
-                    <h2>Exporta codi font per Genweb</h2>
+            <div className="main-stack">
+              <article className="panel">
+                <div className="section-head">
+                  <div className="title-with-icon">
+                    <div className="title-row-inline">
+                      <img className="section-illustration" src={htmlLogo} alt="" aria-hidden="true" />
+                      <h2>Exporta codi font per Genweb</h2>
+                    </div>
                   </div>
                 </div>
-              </div>
 
-              <p className="muted">Selecciona el CSV revisat o el Google Sheet on hagis marcat `Estat = Aprovat`.</p>
+                <p className="muted">
+                  El document utilitzat sera el que seleccionis a `Explorar Drive`.
+                </p>
 
-              <div className="toggle-row">
-                <button type="button" className={generatorMode === 'csv' ? 'nav-pill active' : 'nav-pill'} onClick={() => setGeneratorMode('csv')}>CSV</button>
-                <button type="button" className={generatorMode === 'sheets_oauth' ? 'nav-pill active' : 'nav-pill'} onClick={() => setGeneratorMode('sheets_oauth')}>Google Sheets</button>
-              </div>
-
-              {generatorMode === 'csv' ? (
-                <label className="field">
-                  <span>CSV revisat</span>
-                  <input type="file" accept=".csv,text/csv" onChange={(event) => setGeneratorCsvFile(event.target.files?.[0] || null)} />
-                </label>
-              ) : (
-                <label className="field">
-                  <span>Titol del Google Sheet</span>
-                  <input type="text" value={generatorSheetTitle} onChange={(event) => setGeneratorSheetTitle(event.target.value)} />
-                </label>
-              )}
-
-              <div className="action-stack">
-                <button type="button" onClick={generateHtmlFromExternalSource} disabled={generatorBusy}>{generatorBusy ? 'Generant...' : 'Generar codi font'}</button>
-                <button type="button" className="secondary" onClick={copyGeneratedCode}>Copiar tot el codi</button>
-              </div>
-            </article>
-
-            <article className="panel wide">
-              <div className="section-head">
-                <div>
-                  <p className="panel-kicker">Sortida</p>
-                  <h2>HTML final</h2>
+                <div className="action-stack">
+                  {isGoogleConnected ? (
+                    <>
+                      <button type="button" onClick={generateHtmlFromExternalSource} disabled={generatorBusy}>{generatorBusy ? 'Generant...' : 'Generar codi font'}</button>
+                      {(generatorBusy || generatorCompleted) && (
+                        <div className="mini-progress-row">
+                          <div className="mini-progress" aria-live="polite" aria-label={`Generant codi, ${generatorProgress}%`}>
+                            <div className="mini-progress-bar">
+                              <span style={{ width: `${generatorProgress}%` }} />
+                            </div>
+                            <strong>{`${generatorProgress}%`}</strong>
+                          </div>
+                          {generatorCompleted && <span className="progress-complete-label">Completat</span>}
+                        </div>
+                      )}
+                    </>
+                  ) : (
+                    <p className="scrape-login-warning">No has iniciat sessio de Google. Connecta&apos;t per generar el codi font.</p>
+                  )}
                 </div>
-              </div>
-              <pre className="code-block">{lastGeneratedCode || 'Encara no s’ha generat cap HTML.'}</pre>
-              <p className="muted">Enganxa aquest codi en un bloc HTML de Genweb. El resultat ja ve agrupat i amb el comportament d’acordio.</p>
-            </article>
+              </article>
+
+              <article className="panel wide">
+                <div className="section-head">
+                  <div>
+                 
+                    <h2>Codi font</h2>
+                  </div>
+                </div>
+                <pre className="code-block">{lastGeneratedCode || 'Encara no s’ha generat cap HTML.'}</pre>
+                <div className="code-hint-row">
+                  {lastGeneratedCode.trim() && (
+                    <>
+                      <button type="button" className="copy-inline-button" onClick={copyGeneratedCode}>
+                        Copia
+                      </button>
+                      {copyFeedbackVisible && <span className="copy-success-indicator">✓</span>}
+                    </>
+                  )}
+                  <p className="muted">Enganxa aquest codi en un bloc HTML de Genweb. El resultat ja ve agrupat i amb el comportament d’acordio.</p>
+                </div>
+              </article>
+            </div>
           </section>
         )}
 
-        <p className="home-footnote mono">Projecte de gestio de FAQs UPC amb React i FastAPI. Quan em passis els logos oficials, els integro al header per acostar-nos encara mes a la imatge real de la UPC.</p>
+        <footer className="home-footnote">
+          <img className="footer-logo" src={upcFooterLogo} alt="Universitat Politecnica de Catalunya" />
+          <div className="footer-copy">
+            <p><strong>Credits: UPC ESEIAAT</strong></p>
+            <p>
+              Eina desenvolupada en el marc del projecte Genweb de la Universitat Politecnica de Catalunya (UPC)
+              per a la gestio i publicacio de continguts FAQ.
+            </p>
+          </div>
+        </footer>
       </main>
     </div>
   )

@@ -448,7 +448,22 @@ def export_job_review_to_html(job_id: str):
     if rows is None:
         raise HTTPException(status_code=404, detail="Job not found")
     try:
-        html_text, groups = approved_rows_to_html(rows)
+        export_result = approved_rows_to_html(rows)
+        if isinstance(export_result, tuple):
+            html_text, groups = export_result
+        else:
+            html_text = export_result
+            group_rows = [
+                {
+                    "Tema": row[0] if len(row) > 0 else "",
+                    "Subtopic": row[1] if len(row) > 1 else "",
+                    "Pregunta": row[2] if len(row) > 2 else "",
+                    "Resposta": row[3] if len(row) > 3 else "",
+                    "Font": row[4] if len(row) > 4 else "",
+                }
+                for row in rows
+            ]
+            _, groups = render_genweb_accordion(group_rows)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     return {"job_id": job_id, "approved_rows": len(rows), "html_text": html_text, "groups": groups}
