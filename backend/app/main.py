@@ -46,6 +46,7 @@ from app.schemas import (
 )
 from app.sheets import (
     create_google_authorization_url,
+    ensure_fixed_faqs_spreadsheet_oauth,
     exchange_google_authorization_code,
     export_rows_to_google_sheets_oauth,
     get_google_session_status,
@@ -552,9 +553,14 @@ async def export_html_from_source(
         else:
             if not (spreadsheet_title or "").strip() or not (worksheet_name or "").strip():
                 raise HTTPException(status_code=400, detail="Cal indicar el títol i la pestanya del Google Sheet.")
+            fixed_sheet = ensure_fixed_faqs_spreadsheet_oauth(
+                oauth_client_json=oauth_client_json,
+                token_file=_session_token_file(request),
+            )
             sheet_rows = read_rows_from_sheets_oauth(
-                spreadsheet_title=(spreadsheet_title or "").strip(),
-                worksheet_name=(worksheet_name or "").strip(),
+                spreadsheet_title=fixed_sheet["spreadsheet_title"],
+                worksheet_name=fixed_sheet["worksheet_name"],
+                spreadsheet_id=fixed_sheet["spreadsheet_id"],
                 oauth_client_json=oauth_client_json,
                 token_file=_session_token_file(request),
                 create_if_missing=True,
@@ -599,11 +605,15 @@ def export_job_review_to_sheets(request: Request, job_id: str, payload: SheetsEx
         raise HTTPException(status_code=404, detail="Job not found")
 
     try:
+        fixed_sheet = ensure_fixed_faqs_spreadsheet_oauth(
+            oauth_client_json=payload.oauth_client_json,
+            token_file=_session_token_file(request),
+        )
         export_rows_to_google_sheets_oauth(
             rows=rows,
-            spreadsheet_title=payload.spreadsheet_title,
-            spreadsheet_id=payload.spreadsheet_id,
-            worksheet_name=payload.worksheet_name,
+            spreadsheet_title=fixed_sheet["spreadsheet_title"],
+            spreadsheet_id=fixed_sheet["spreadsheet_id"],
+            worksheet_name=fixed_sheet["worksheet_name"],
             oauth_client_json=payload.oauth_client_json,
             token_file=_session_token_file(request),
         )
@@ -614,6 +624,6 @@ def export_job_review_to_sheets(request: Request, job_id: str, payload: SheetsEx
     return {
         "job_id": job_id,
         "approved_rows": approved_rows,
-        "spreadsheet_title": payload.spreadsheet_title,
-        "worksheet_name": payload.worksheet_name,
+        "spreadsheet_title": fixed_sheet["spreadsheet_title"],
+        "worksheet_name": fixed_sheet["worksheet_name"],
     }

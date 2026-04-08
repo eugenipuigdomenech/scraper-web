@@ -223,11 +223,7 @@ def render_upc_faqaccordion(items: list[dict[str, str]]) -> str:
         return col.getAttribute('data-bs-parent') === '#' + acc.id;
       });
     }
-
-    function btnFor(col) {
-      return acc.querySelector('[data-bs-target="#' + col.id + '"]');
-    }
-
+glc
     function setStyles(col, isOpen) {
       var btn = btnFor(col);
         if (btn) {

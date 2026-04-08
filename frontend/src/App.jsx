@@ -13,6 +13,9 @@ const defaultApiBase = `${window.location.protocol}//${window.location.hostname}
 const API_BASE = (import.meta.env.VITE_API_URL || defaultApiBase).replace(/\/$/, '')
 const STORAGE_KEY = 'upc-faq-manager-state-v2'
 const GOOGLE_SESSION_KEY = 'upc-google-session-id'
+const FIXED_DRIVE_PATH = 'El meu Drive / UPC / FAQs'
+const FIXED_SPREADSHEET_TITLE = 'FAQs'
+const FIXED_WORKSHEET_NAME = 'FAQs'
 
 const defaultSources = [
   {
@@ -26,8 +29,6 @@ const defaultState = {
   activeView: 'home',
   sources: defaultSources,
   debug: false,
-  downloadSheetTitle: 'FAQs UPC',
-  downloadWorksheetName: 'FAQs',
   generatorSheetTab: 'Revisio',
   lastGeneratedCode: '',
   lastSelectedJobId: '',
@@ -205,8 +206,6 @@ export default function App() {
   const [activeView, setActiveView] = useState(persisted.activeView)
   const [sources, setSources] = useState(persisted.sources)
   const [debug] = useState(persisted.debug)
-  const [downloadSheetTitle, setDownloadSheetTitle] = useState(persisted.downloadSheetTitle)
-  const [downloadWorksheetName, setDownloadWorksheetName] = useState(persisted.downloadWorksheetName)
   const [lastGeneratedCode, setLastGeneratedCode] = useState(persisted.lastGeneratedCode)
   const [selectedJobId, setSelectedJobId] = useState(persisted.lastSelectedJobId)
 
@@ -215,13 +214,6 @@ export default function App() {
   const [jobResult, setJobResult] = useState(null)
   const [_HEALTH, setHealth] = useState(null)
   const [googleSession, setGoogleSession] = useState(null)
-  const [driveItems, setDriveItems] = useState([])
-  const [driveStack, setDriveStack] = useState([{ id: null, name: 'El meu Drive' }])
-  const [driveBrowserOpen, setDriveBrowserOpen] = useState(false)
-  const [driveBusy, setDriveBusy] = useState(false)
-  const [selectedDriveSheet, setSelectedDriveSheet] = useState(null)
-  const [selectedDriveWorksheets, setSelectedDriveWorksheets] = useState([])
-  const [creatingNewSheet, setCreatingNewSheet] = useState(false)
   const [activityLogs, setActivityLogs] = useState([])
 
   const [processMessage, setProcessMessage] = useState('')
@@ -272,8 +264,6 @@ export default function App() {
         activeView,
         sources,
         debug,
-        downloadSheetTitle,
-        downloadWorksheetName,
         lastGeneratedCode,
         lastSelectedJobId: selectedJobId,
       }),
@@ -282,8 +272,6 @@ export default function App() {
     activeView,
     sources,
     debug,
-    downloadSheetTitle,
-    downloadWorksheetName,
     lastGeneratedCode,
     selectedJobId,
   ])
@@ -315,91 +303,6 @@ export default function App() {
     const sessionData = await sessionResponse.json().catch(() => null)
     if (!sessionResponse.ok) throw new Error(sessionData?.detail || `HTTP ${sessionResponse.status}`)
     setGoogleSession(sessionData)
-  }
-
-  async function loadDriveItems(parentId = null, reset = false) {
-    setDriveBusy(true)
-    try {
-      const params = new URLSearchParams()
-      if (parentId) params.set('parent_id', parentId)
-      const response = await apiFetch(`${API_BASE}/api/google/drive/items?${params.toString()}`)
-      const data = await response.json().catch(() => null)
-      if (!response.ok) throw new Error(data?.detail || `HTTP ${response.status}`)
-      setDriveItems(data.items || [])
-      if (reset) {
-        setDriveStack([{ id: null, name: 'El meu Drive' }])
-      }
-    } catch (error) {
-      setExportMessage(error instanceof Error ? error.message : 'No s’ha pogut carregar el Drive.')
-    } finally {
-      setDriveBusy(false)
-    }
-  }
-
-  async function loadSpreadsheetWorksheets(spreadsheetId) {
-    try {
-      const params = new URLSearchParams({ spreadsheet_id: spreadsheetId })
-      const response = await apiFetch(`${API_BASE}/api/google/spreadsheets/worksheets?${params.toString()}`)
-      const data = await response.json().catch(() => null)
-      if (!response.ok) throw new Error(data?.detail || `HTTP ${response.status}`)
-      const worksheetNames = data.worksheets || []
-      setSelectedDriveWorksheets(worksheetNames)
-      setDownloadWorksheetName(worksheetNames[0] || 'FAQs')
-    } catch (error) {
-      setSelectedDriveWorksheets([])
-      setDownloadWorksheetName('FAQs')
-      setExportMessage(error instanceof Error ? error.message : 'No s’han pogut carregar les pestanyes del Google Sheet.')
-    }
-  }
-
-  async function openDriveBrowser() {
-    setDriveBrowserOpen(true)
-    setExportMessage('')
-    await loadDriveItems(null, true)
-  }
-
-  async function openDriveFolder(item) {
-    setDriveStack((current) => [...current, { id: item.id, name: item.name }])
-    await loadDriveItems(item.id)
-  }
-
-  async function navigateDriveTo(index) {
-    const nextStack = driveStack.slice(0, index + 1)
-    setDriveStack(nextStack)
-    const current = nextStack[nextStack.length - 1]
-    await loadDriveItems(current.id)
-  }
-
-  function selectDriveSheet(item) {
-    setDownloadSheetTitle(item.name)
-    setSelectedDriveSheet(item)
-    setCreatingNewSheet(false)
-    loadSpreadsheetWorksheets(item.id).catch(() => {})
-    setExportMessage(`Google Sheet seleccionat: ${item.name}`)
-    appendActivityLog(`Google Sheet seleccionat: ${item.name}`)
-  }
-
-  function startCreatingNewSheet() {
-    if (creatingNewSheet) {
-      setCreatingNewSheet(false)
-      setDownloadSheetTitle(selectedDriveSheet?.name || '')
-      return
-    }
-
-    setCreatingNewSheet(true)
-    setDriveBrowserOpen(false)
-    setSelectedDriveSheet(null)
-    setSelectedDriveWorksheets([])
-    setDownloadSheetTitle('')
-    setDownloadWorksheetName('FAQs')
-    appendActivityLog('Mode de creacio de nou Google Sheet activat')
-  }
-
-  async function returnToDriveBrowser() {
-    setCreatingNewSheet(false)
-    setDriveBrowserOpen(true)
-    setExportMessage('')
-    await loadDriveItems(null, true)
   }
 
   useEffect(() => {
@@ -517,12 +420,11 @@ export default function App() {
   useEffect(() => {
     if (!selectedJobId || selectedJob?.status !== 'done') return
     if (!googleSession?.connected) return
-    if (!downloadSheetTitle.trim()) return
     if (downloadBusy) return
     if (lastAutoExportedJobId === selectedJobId) return
 
     exportScrapeResult().catch(() => {})
-  }, [selectedJobId, selectedJob?.status, googleSession?.connected, downloadSheetTitle, downloadBusy, lastAutoExportedJobId])
+  }, [selectedJobId, selectedJob?.status, googleSession?.connected, downloadBusy, lastAutoExportedJobId])
 
   function addTopic() {
     setSources((current) => [
@@ -714,28 +616,21 @@ export default function App() {
     if (!selectedJobId) return
     setExportMessage('')
 
-    if (!downloadSheetTitle.trim()) {
-      setExportMessage('Indica el títol del Google Sheet.')
-      appendActivityLog('Exportacio cancel·lada: falta el titol del Google Sheet')
-      return
-    }
-
     setDownloadBusy(true)
-    appendActivityLog(`Exportant FAQs a Google Sheets: ${downloadSheetTitle.trim()} / ${creatingNewSheet ? 'FAQs' : (downloadWorksheetName.trim() || 'FAQs')}`)
+    appendActivityLog(`Exportant FAQs a Google Sheets: ${FIXED_DRIVE_PATH} / ${FIXED_SPREADSHEET_TITLE} / ${FIXED_WORKSHEET_NAME}`)
     try {
       const response = await apiFetch(`${API_BASE}/api/jobs/${selectedJobId}/export/sheets`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          spreadsheet_title: downloadSheetTitle.trim(),
-          spreadsheet_id: selectedDriveSheet?.id || undefined,
-          worksheet_name: creatingNewSheet ? 'FAQs' : (downloadWorksheetName.trim() || 'FAQs'),
+          spreadsheet_title: FIXED_SPREADSHEET_TITLE,
+          worksheet_name: FIXED_WORKSHEET_NAME,
         }),
       })
       const data = await response.json().catch(() => null)
       if (!response.ok) throw new Error(data?.detail || `HTTP ${response.status}`)
-      setExportMessage(`Resultat exportat a Google Sheets: ${data.spreadsheet_title} / ${data.worksheet_name}. Fes la revisió i marca Estat=Aprovat al full.`)
-      appendActivityLog(`Exportacio completada: ${data.spreadsheet_title} / ${data.worksheet_name}`)
+      setExportMessage(`Resultat exportat a Google Sheets a ${FIXED_DRIVE_PATH}/${data.spreadsheet_title}. Fes la revisió i marca Estat=Aprovat al full.`)
+      appendActivityLog(`Exportacio completada: ${FIXED_DRIVE_PATH} / ${data.spreadsheet_title} / ${data.worksheet_name}`)
       setLastAutoExportedJobId(selectedJobId)
       await loadGoogleStatus()
     } catch (error) {
@@ -756,13 +651,8 @@ export default function App() {
       return
     }
 
-    if (!downloadSheetTitle.trim()) {
-      setExportMessage('Selecciona o crea un Google Sheet des del panell de l’esquerra.')
-      return
-    }
-
-    formData.append('spreadsheet_title', downloadSheetTitle.trim())
-    formData.append('worksheet_name', creatingNewSheet ? 'FAQs' : (downloadWorksheetName.trim() || 'FAQs'))
+    formData.append('spreadsheet_title', FIXED_SPREADSHEET_TITLE)
+    formData.append('worksheet_name', FIXED_WORKSHEET_NAME)
 
     setGeneratorCompleted(false)
     setGeneratorProgress(0)
@@ -805,7 +695,7 @@ export default function App() {
     }
   }
 
-  const expectsAutoExport = Boolean(googleSession?.connected && downloadSheetTitle.trim())
+  const expectsAutoExport = Boolean(googleSession?.connected)
   const scrapeProgressPercent = Math.round((selectedJob?.progress_ratio || 0) * 100)
   let progressPercent = scrapeProgressPercent
 
@@ -827,8 +717,6 @@ export default function App() {
   const showScrapeInlineProgress = submitting || Boolean(selectedJobId && selectedJob?.status !== 'error')
   const scrapeInlineProgress = Math.round(scrapeVisualProgress)
   const visibleLogs = [...(selectedJob?.logs || []), ...activityLogs]
-  const allowNewSheetCreation = activeView === 'scrape'
-  const isCreatingSheetHere = allowNewSheetCreation && creatingNewSheet
   const isGoogleConnected = Boolean(googleSession?.connected)
 
   useEffect(() => {
@@ -903,90 +791,12 @@ export default function App() {
       )}
       {googleSession?.connected && (
         <div className="drive-browser-card">
-          <button
-            type="button"
-            className={driveBrowserOpen && !isCreatingSheetHere ? 'nav-pill active' : 'secondary'}
-            onClick={() => {
-              if (isCreatingSheetHere) {
-                returnToDriveBrowser().catch(() => {})
-                return
-              }
-              if (driveBrowserOpen) {
-                setDriveBrowserOpen(false)
-                return
-              }
-              openDriveBrowser().catch(() => {})
-            }}
-            disabled={driveBusy}
-          >
-            Explorar Drive
-          </button>
-
-          {allowNewSheetCreation && (
-            <button type="button" className={creatingNewSheet ? 'nav-pill active' : 'nav-pill'} onClick={startCreatingNewSheet}>
-              Crear Nou Sheets
-            </button>
-          )}
-
-          {isCreatingSheetHere ? (
-            <label className="field">
-              <span>Titol del nou Google Sheet</span>
-              <input type="text" value={downloadSheetTitle} onChange={(event) => setDownloadSheetTitle(event.target.value)} />
-            </label>
-          ) : (
-            <>
-              {selectedDriveSheet && (
-                <div className="selected-sheet-card">
-                  <span className="drive-item-kind">Sheet seleccionat</span>
-                  <strong>{selectedDriveSheet.name}</strong>
-                  {selectedDriveWorksheets.length > 0 && (
-                    <label className="field worksheet-picker">
-                      <span>Pestanya</span>
-                      <select value={downloadWorksheetName} onChange={(event) => setDownloadWorksheetName(event.target.value)}>
-                        {selectedDriveWorksheets.map((worksheet) => (
-                          <option key={worksheet} value={worksheet}>
-                            {worksheet}
-                          </option>
-                        ))}
-                      </select>
-                    </label>
-                  )}
-                </div>
-              )}
-
-              {driveBrowserOpen && (
-                <div className="drive-browser-body">
-                  <div className="drive-breadcrumbs">
-                    {driveStack.map((crumb, index) => (
-                      <button key={`${crumb.id || 'root'}-${index}`} type="button" className="drive-crumb" onClick={() => navigateDriveTo(index)} disabled={driveBusy}>
-                        {crumb.name}
-                      </button>
-                    ))}
-                  </div>
-
-                  <div className="drive-list">
-                    {driveBusy ? (
-                      <p className="muted">Carregant elements de Drive...</p>
-                    ) : driveItems.length > 0 ? (
-                      driveItems.map((item) => (
-                        <button
-                          key={item.id}
-                          type="button"
-                          className={`drive-item ${item.kind} ${selectedDriveSheet?.id === item.id ? 'selected' : ''}`}
-                          onClick={() => (item.kind === 'folder' ? openDriveFolder(item) : selectDriveSheet(item))}
-                        >
-                          <span className="drive-item-kind">{item.kind === 'folder' ? 'Carpeta' : 'Sheet'}</span>
-                          <strong>{item.name}</strong>
-                        </button>
-                      ))
-                    ) : (
-                      <p className="muted">No hi ha carpetes ni Google Sheets en aquesta ubicació.</p>
-                    )}
-                  </div>
-                </div>
-              )}
-            </>
-          )}
+          <div className="selected-sheet-card">
+            <span className="drive-item-kind">Desti fix de Google Drive</span>
+            <strong>{FIXED_SPREADSHEET_TITLE}</strong>
+            <p className="selected-sheet-helper">Ruta: {FIXED_DRIVE_PATH}</p>
+            <p className="selected-sheet-helper">Pestanya: {FIXED_WORKSHEET_NAME}</p>
+          </div>
         </div>
       )}
     </aside>
@@ -1206,7 +1016,7 @@ export default function App() {
                 </div>
 
                 <p className="muted">
-                  El document utilitzat sera el que seleccionis a `Explorar Drive`.
+                  El document utilitzat sera sempre `El meu Drive / UPC / FAQs / FAQs`, a la pestanya `FAQs`.
                 </p>
 
                 <div className="action-stack">

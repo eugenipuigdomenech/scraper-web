@@ -2,7 +2,7 @@ import os
 import re
 from datetime import datetime
 from pathlib import Path
-from typing import Dict, List
+from typing import Any, Dict, List
 from bs4 import BeautifulSoup, NavigableString
 
 import gspread
@@ -16,6 +16,12 @@ try:
     from .constants import OAUTH_SCOPES, SHEETS_COLUMNS
 except ImportError:
     from constants import OAUTH_SCOPES, SHEETS_COLUMNS
+
+
+FIXED_DRIVE_ROOT_FOLDER = "UPC"
+FIXED_DRIVE_FAQS_FOLDER = "FAQs"
+FIXED_SPREADSHEET_TITLE = "FAQs"
+FIXED_WORKSHEET_NAME = "FAQs"
 
 
 def get_oauth_client(oauth_client_json="oauth_client.json", token_file="token.json"):
@@ -318,6 +324,149 @@ def list_worksheets_oauth(
         return [worksheet.title for worksheet in spreadsheet.worksheets() if (worksheet.title or "").strip()]
     except Exception as exc:
         raise RuntimeError(f"No s'han pogut llegir les pestanyes del Google Sheet: {_format_google_error(exc)}") from exc
+
+
+def _drive_api_json(
+    *,
+    method: str,
+    creds: OAuthCredentials,
+    path: str,
+    params: dict[str, Any] | None = None,
+    json_body: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    headers = {"Authorization": f"Bearer {creds.token}"}
+    response = requests.request(
+        method=method.upper(),
+        url=f"https://www.googleapis.com/drive/v3/{path.lstrip('/')}",
+        params=params,
+        json=json_body,
+        headers=headers,
+        timeout=20,
+    )
+    try:
+        response.raise_for_status()
+    except Exception as exc:
+        raise RuntimeError(_format_google_error(exc)) from exc
+    return response.json() if response.content else {}
+
+
+def _escape_drive_query_value(value: str) -> str:
+    return (value or "").replace("\\", "\\\\").replace("'", "\\'")
+
+
+def _find_drive_folder(*, creds: OAuthCredentials, parent_id: str, name: str) -> dict[str, str] | None:
+    query = (
+        f"'{parent_id}' in parents and trashed = false and "
+        "mimeType = 'application/vnd.google-apps.folder' and "
+        f"name = '{_escape_drive_query_value(name)}'"
+    )
+    data = _drive_api_json(
+        method="GET",
+        creds=creds,
+        path="files",
+        params={
+            "q": query,
+            "fields": "files(id,name)",
+            "pageSize": "10",
+            "supportsAllDrives": "true",
+            "includeItemsFromAllDrives": "true",
+        },
+    )
+    files = data.get("files") or []
+    return files[0] if files else None
+
+
+def _create_drive_folder(*, creds: OAuthCredentials, parent_id: str, name: str) -> dict[str, str]:
+    return _drive_api_json(
+        method="POST",
+        creds=creds,
+        path="files",
+        params={"fields": "id,name", "supportsAllDrives": "true"},
+        json_body={
+            "name": name,
+            "mimeType": "application/vnd.google-apps.folder",
+            "parents": [parent_id],
+        },
+    )
+
+
+def _find_drive_spreadsheet(*, creds: OAuthCredentials, parent_id: str, name: str) -> dict[str, str] | None:
+    query = (
+        f"'{parent_id}' in parents and trashed = false and "
+        "mimeType = 'application/vnd.google-apps.spreadsheet' and "
+        f"name = '{_escape_drive_query_value(name)}'"
+    )
+    data = _drive_api_json(
+        method="GET",
+        creds=creds,
+        path="files",
+        params={
+            "q": query,
+            "fields": "files(id,name)",
+            "pageSize": "10",
+            "supportsAllDrives": "true",
+            "includeItemsFromAllDrives": "true",
+        },
+    )
+    files = data.get("files") or []
+    return files[0] if files else None
+
+
+def _create_drive_spreadsheet(*, creds: OAuthCredentials, parent_id: str, name: str) -> dict[str, str]:
+    return _drive_api_json(
+        method="POST",
+        creds=creds,
+        path="files",
+        params={"fields": "id,name", "supportsAllDrives": "true"},
+        json_body={
+            "name": name,
+            "mimeType": "application/vnd.google-apps.spreadsheet",
+            "parents": [parent_id],
+        },
+    )
+
+
+def ensure_fixed_faqs_spreadsheet_oauth(
+    *,
+    oauth_client_json: str = "oauth_client.json",
+    token_file: str = "token.json",
+    log=None,
+) -> dict[str, str]:
+    def _log(message: str):
+        if log:
+            log(message)
+
+    creds = _get_oauth_credentials(token_file=token_file)
+    client = get_oauth_client(oauth_client_json=oauth_client_json, token_file=token_file)
+
+    root_folder = _find_drive_folder(creds=creds, parent_id="root", name=FIXED_DRIVE_ROOT_FOLDER)
+    if root_folder is None:
+        root_folder = _create_drive_folder(creds=creds, parent_id="root", name=FIXED_DRIVE_ROOT_FOLDER)
+        _log(f"Carpeta creada a l'arrel de Drive: {FIXED_DRIVE_ROOT_FOLDER}")
+    else:
+        _log(f"Carpeta trobada a l'arrel de Drive: {FIXED_DRIVE_ROOT_FOLDER}")
+
+    faqs_folder = _find_drive_folder(creds=creds, parent_id=root_folder["id"], name=FIXED_DRIVE_FAQS_FOLDER)
+    if faqs_folder is None:
+        faqs_folder = _create_drive_folder(creds=creds, parent_id=root_folder["id"], name=FIXED_DRIVE_FAQS_FOLDER)
+        _log(f"Carpeta creada dins de {FIXED_DRIVE_ROOT_FOLDER}: {FIXED_DRIVE_FAQS_FOLDER}")
+    else:
+        _log(f"Carpeta trobada dins de {FIXED_DRIVE_ROOT_FOLDER}: {FIXED_DRIVE_FAQS_FOLDER}")
+
+    spreadsheet = _find_drive_spreadsheet(creds=creds, parent_id=faqs_folder["id"], name=FIXED_SPREADSHEET_TITLE)
+    if spreadsheet is None:
+        spreadsheet = _create_drive_spreadsheet(creds=creds, parent_id=faqs_folder["id"], name=FIXED_SPREADSHEET_TITLE)
+        _log(f"Google Sheet creat a {FIXED_DRIVE_ROOT_FOLDER}/{FIXED_DRIVE_FAQS_FOLDER}: {FIXED_SPREADSHEET_TITLE}")
+    else:
+        _log(f"Google Sheet trobat a {FIXED_DRIVE_ROOT_FOLDER}/{FIXED_DRIVE_FAQS_FOLDER}: {FIXED_SPREADSHEET_TITLE}")
+
+    sh = client.open_by_key(spreadsheet["id"])
+    return {
+        "spreadsheet_id": spreadsheet["id"],
+        "spreadsheet_title": sh.title,
+        "worksheet_name": FIXED_WORKSHEET_NAME,
+        "folder_path": f"{FIXED_DRIVE_ROOT_FOLDER}/{FIXED_DRIVE_FAQS_FOLDER}",
+    }
 
 
 def _format_google_error(e: Exception) -> str:
@@ -627,12 +776,19 @@ def export_rows_to_google_sheets_oauth(
         ws = sh.worksheet(worksheet_name)
         _log(f"Pestanya oberta: {worksheet_name}")
     except Exception:
-        ws = sh.add_worksheet(
-            title=worksheet_name,
-            rows=max(1000, len(rows) + 10),
-            cols=max(11, len(SHEETS_COLUMNS)),
-        )
-        _log(f"Pestanya creada: {worksheet_name}")
+        worksheets = sh.worksheets()
+        default_ws = worksheets[0] if len(worksheets) == 1 and (worksheets[0].title or "").strip() == "Sheet1" else None
+        if default_ws is not None:
+            default_ws.update_title(worksheet_name)
+            ws = default_ws
+            _log(f"Pestanya renombrada de Sheet1 a: {worksheet_name}")
+        else:
+            ws = sh.add_worksheet(
+                title=worksheet_name,
+                rows=max(1000, len(rows) + 10),
+                cols=max(11, len(SHEETS_COLUMNS)),
+            )
+            _log(f"Pestanya creada: {worksheet_name}")
 
     values = ws.get_all_values()
     is_truly_empty = not values or all((not r) or all((c or "").strip() == "" for c in r) for r in values)
@@ -704,6 +860,7 @@ def export_rows_to_google_sheets_oauth(
 def read_rows_from_sheets_oauth(
     spreadsheet_title: str,
     worksheet_name: str,
+    spreadsheet_id: str | None = None,
     oauth_client_json: str = "oauth_client.json",
     token_file: str = "token.json",
     log=None,
@@ -720,8 +877,12 @@ def read_rows_from_sheets_oauth(
         raise RuntimeError(f"No s'ha pogut autenticar amb Google: {_format_google_error(e)}") from e
 
     _log(f"Google Sheets: obrint sheet '{spreadsheet_title}'…")
+    spreadsheet_key = (spreadsheet_id or "").strip()
     try:
-        sh = _open_sheet_lenient(client, spreadsheet_title, log=log)
+        if spreadsheet_key:
+            sh = client.open_by_key(spreadsheet_key)
+        else:
+            sh = _open_sheet_lenient(client, spreadsheet_title, log=log)
     except Exception as e:
         if create_if_missing:
             _log(f"Google Sheets: el sheet '{spreadsheet_title}' no existeix, es crearà…")
