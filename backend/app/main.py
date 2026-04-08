@@ -556,6 +556,7 @@ async def export_html_from_source(
             fixed_sheet = ensure_fixed_faqs_spreadsheet_oauth(
                 oauth_client_json=oauth_client_json,
                 token_file=_session_token_file(request),
+                create_missing=False,
             )
             sheet_rows = read_rows_from_sheets_oauth(
                 spreadsheet_title=fixed_sheet["spreadsheet_title"],
@@ -563,7 +564,7 @@ async def export_html_from_source(
                 spreadsheet_id=fixed_sheet["spreadsheet_id"],
                 oauth_client_json=oauth_client_json,
                 token_file=_session_token_file(request),
-                create_if_missing=True,
+                create_if_missing=False,
             )
             rows = [normalize_row_dict(row) for row in sheet_rows]
 

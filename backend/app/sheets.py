@@ -431,6 +431,7 @@ def ensure_fixed_faqs_spreadsheet_oauth(
     oauth_client_json: str = "oauth_client.json",
     token_file: str = "token.json",
     log=None,
+    create_missing: bool = True,
 ) -> dict[str, str]:
     def _log(message: str):
         if log:
@@ -441,6 +442,10 @@ def ensure_fixed_faqs_spreadsheet_oauth(
 
     root_folder = _find_drive_folder(creds=creds, parent_id="root", name=FIXED_DRIVE_ROOT_FOLDER)
     if root_folder is None:
+        if not create_missing:
+            raise RuntimeError(
+                f"No s'ha trobat cap document '{FIXED_SPREADSHEET_TITLE}' a {FIXED_DRIVE_ROOT_FOLDER}/{FIXED_DRIVE_FAQS_FOLDER}."
+            )
         root_folder = _create_drive_folder(creds=creds, parent_id="root", name=FIXED_DRIVE_ROOT_FOLDER)
         _log(f"Carpeta creada a l'arrel de Drive: {FIXED_DRIVE_ROOT_FOLDER}")
     else:
@@ -448,6 +453,10 @@ def ensure_fixed_faqs_spreadsheet_oauth(
 
     faqs_folder = _find_drive_folder(creds=creds, parent_id=root_folder["id"], name=FIXED_DRIVE_FAQS_FOLDER)
     if faqs_folder is None:
+        if not create_missing:
+            raise RuntimeError(
+                f"No s'ha trobat cap document '{FIXED_SPREADSHEET_TITLE}' a {FIXED_DRIVE_ROOT_FOLDER}/{FIXED_DRIVE_FAQS_FOLDER}."
+            )
         faqs_folder = _create_drive_folder(creds=creds, parent_id=root_folder["id"], name=FIXED_DRIVE_FAQS_FOLDER)
         _log(f"Carpeta creada dins de {FIXED_DRIVE_ROOT_FOLDER}: {FIXED_DRIVE_FAQS_FOLDER}")
     else:
@@ -455,6 +464,10 @@ def ensure_fixed_faqs_spreadsheet_oauth(
 
     spreadsheet = _find_drive_spreadsheet(creds=creds, parent_id=faqs_folder["id"], name=FIXED_SPREADSHEET_TITLE)
     if spreadsheet is None:
+        if not create_missing:
+            raise RuntimeError(
+                f"No s'ha trobat cap document '{FIXED_SPREADSHEET_TITLE}' a {FIXED_DRIVE_ROOT_FOLDER}/{FIXED_DRIVE_FAQS_FOLDER}."
+            )
         spreadsheet = _create_drive_spreadsheet(creds=creds, parent_id=faqs_folder["id"], name=FIXED_SPREADSHEET_TITLE)
         _log(f"Google Sheet creat a {FIXED_DRIVE_ROOT_FOLDER}/{FIXED_DRIVE_FAQS_FOLDER}: {FIXED_SPREADSHEET_TITLE}")
     else:
