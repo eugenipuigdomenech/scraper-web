@@ -102,6 +102,7 @@ def render_upc_faqaccordion(items: list[dict[str, str]]) -> str:
         out_lines: list[str], topic_idx: int, topic_items: list[dict[str, str]], parent_id: str
     ):
         for item_idx, it in enumerate(topic_items, start=1):
+            is_last_item = item_idx == len(topic_items)
             q = (it.get("Pregunta") or "").strip()
             a = (it.get("Resposta") or "").strip()
             q_html = q if _looks_like_html(q) else html.escape(q)
@@ -109,7 +110,10 @@ def render_upc_faqaccordion(items: list[dict[str, str]]) -> str:
             qid = f"c{topic_idx}-{item_idx}"
 
             out_lines.append(f"<!-- ITEM {topic_idx}.{item_idx} -->")
-            out_lines.append('<div class="accordion-item" style="border: 0; box-shadow: none; border-bottom: 1px solid #D1D1D1; background: transparent; border-radius: 0;">')
+            item_border_bottom = " border-bottom: 1px solid #D1D1D1;" if not is_last_item else ""
+            out_lines.append(
+                f'<div class="accordion-item" style="border: 0; box-shadow: none;{item_border_bottom} background: transparent; border-radius: 0;">'
+            )
             out_lines.append(
                 '<h2 style="padding: 0; margin: 0;">'
                 f'<button type="button" class="accordion-button collapsed" data-bs-toggle="collapse" data-bs-target="#{qid}" aria-expanded="false" aria-controls="{qid}" data-upc-faq-toggle="1" '
@@ -121,7 +125,7 @@ def render_upc_faqaccordion(items: list[dict[str, str]]) -> str:
             )
             out_lines.append(
                 f'<div id="{qid}" class="collapse" data-bs-parent="#{parent_id}" '
-                'style="border-bottom: 1px solid #D1D1D1; margin-bottom: -1px; position: relative; z-index: 1; height: 0px; overflow: hidden; transition: height 350ms ease;">'
+                'style="margin-bottom: -1px; position: relative; z-index: 1; height: 0px; overflow: hidden; transition: height 350ms ease;">'
             )
             out_lines.append('<div style="border-top: 0; padding: 0 18px 18px; background: transparent;">')
             out_lines.append(
