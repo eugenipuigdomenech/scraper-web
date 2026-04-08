@@ -667,8 +667,9 @@ export default function App() {
       setLastGeneratedCode(data.html_text || '')
       setGeneratorProgress(100)
       setGeneratorCompleted(true)
-      setExportMessage(`HTML generat amb ${data.approved_rows} files aprovades i ${data.groups} grups.`)
+      setExportMessage('Codi HTML carregat des del document FAQs.')
     } catch (error) {
+      setLastGeneratedCode('')
       setGeneratorCompleted(false)
       setGeneratorProgress(0)
       setExportMessage(error instanceof Error ? error.message : 'No s’ha pogut generar el HTML.')

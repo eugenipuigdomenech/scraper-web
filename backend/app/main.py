@@ -277,6 +277,8 @@ def _read_csv_rows(path: str) -> list[dict[str, str]]:
 
 def _build_export_from_rows(rows: list[dict[str, str]], input_mode: str) -> dict[str, str | int]:
     approved = filter_approved(rows)
+    if not approved:
+        raise ValueError("No hi ha cap FAQ aprovada al document 'FAQs'.")
     approved = apply_default_subtopics(approved)
     validate_subtopics(approved, require_for_approved=False)
     html_text, groups = render_genweb_accordion(approved)
