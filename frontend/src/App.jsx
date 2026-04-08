@@ -798,9 +798,8 @@ export default function App() {
       {googleSession?.connected && (
         <div className="drive-browser-card">
           <div className="selected-sheet-card">
-            <span className="drive-item-kind">Desti fix de Google Drive</span>
-            <strong>{FIXED_SPREADSHEET_TITLE}</strong>
-            <p className="selected-sheet-helper">Ruta: {FIXED_DRIVE_PATH}</p>
+            <span className="drive-item-kind">Google Drive</span>
+            <strong>{FIXED_DRIVE_PATH} / {FIXED_SPREADSHEET_TITLE}</strong>
             <p className="selected-sheet-helper">Pestanya: {FIXED_WORKSHEET_NAME}</p>
           </div>
         </div>
