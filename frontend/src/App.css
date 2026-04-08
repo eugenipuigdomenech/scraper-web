@@ -947,6 +947,18 @@ pre {
   gap: 0.55rem;
 }
 
+.generator-error-box {
+  display: inline-flex;
+  align-items: center;
+  min-height: 46px;
+  padding: 0.75rem 0.95rem;
+  color: #7a1020;
+  background: #fdecee;
+  border: 1px solid #e3a1aa;
+  border-left: 4px solid #c7283c;
+  font-weight: 700;
+}
+
 .mini-progress-bar {
   height: 10px;
   background: #dbe8f0;

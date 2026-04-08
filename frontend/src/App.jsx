@@ -225,6 +225,7 @@ export default function App() {
   const [generatorBusy, setGeneratorBusy] = useState(false)
   const [generatorProgress, setGeneratorProgress] = useState(0)
   const [generatorCompleted, setGeneratorCompleted] = useState(false)
+  const [generatorMissingSheet, setGeneratorMissingSheet] = useState(false)
   const [scrapeVisualProgress, setScrapeVisualProgress] = useState(0)
   const [copyFeedbackVisible, setCopyFeedbackVisible] = useState(false)
   const [googleBusy, setGoogleBusy] = useState(false)
@@ -643,6 +644,7 @@ export default function App() {
 
   async function generateHtmlFromExternalSource() {
     setExportMessage('')
+    setGeneratorMissingSheet(false)
     const formData = new FormData()
     formData.append('input_mode', 'sheets_oauth')
 
@@ -667,12 +669,15 @@ export default function App() {
       setLastGeneratedCode(data.html_text || '')
       setGeneratorProgress(100)
       setGeneratorCompleted(true)
+      setGeneratorMissingSheet(false)
       setExportMessage('Codi HTML carregat des del document FAQs.')
     } catch (error) {
+      const message = error instanceof Error ? error.message : 'No s’ha pogut generar el HTML.'
       setLastGeneratedCode('')
       setGeneratorCompleted(false)
       setGeneratorProgress(0)
-      setExportMessage(error instanceof Error ? error.message : 'No s’ha pogut generar el HTML.')
+      setGeneratorMissingSheet(message.includes("No s'ha trobat cap document 'FAQs'"))
+      setExportMessage(message)
     } finally {
       window.setTimeout(() => {
         setGeneratorBusy(false)
@@ -1024,7 +1029,11 @@ export default function App() {
                   {isGoogleConnected ? (
                     <>
                       <button type="button" onClick={generateHtmlFromExternalSource} disabled={generatorBusy}>{generatorBusy ? 'Generant...' : 'Generar codi font'}</button>
-                      {(generatorBusy || generatorCompleted) && (
+                      {generatorMissingSheet ? (
+                        <div className="generator-error-box" role="alert">
+                          No hi ha cap arxiu Excel amb FAQs.
+                        </div>
+                      ) : (generatorBusy || generatorCompleted) && (
                         <div className="mini-progress-row">
                           <div className="mini-progress" aria-live="polite" aria-label={`Generant codi, ${generatorProgress}%`}>
                             <div className="mini-progress-bar">
