@@ -746,6 +746,27 @@ pre {
   border-left: 4px solid var(--upc-orange);
 }
 
+.sheet-warning-head {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+}
+
+.sheet-warning-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.15rem;
+  height: 1.15rem;
+  border-radius: 999px;
+  background: #c7283c;
+  color: #fff;
+  font-size: 0.78rem;
+  font-weight: 800;
+  line-height: 1;
+  box-shadow: 0 0 0 2px rgba(199, 40, 60, 0.16);
+}
+
 .selected-sheet-card strong {
   color: var(--upc-blue-deep);
 }

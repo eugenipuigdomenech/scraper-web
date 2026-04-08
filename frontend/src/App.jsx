@@ -798,7 +798,12 @@ export default function App() {
       {googleSession?.connected && (
         <div className="drive-browser-card">
           <div className="selected-sheet-card">
-            <span className="drive-item-kind">Google Drive</span>
+            <div className="sheet-warning-head">
+              <span className="sheet-warning-icon" aria-hidden="true">!</span>
+              <span className="drive-item-kind">
+                Atencio! {activeView === 'scrape' ? 'Es guardara en aquesta ruta per defecte' : 'Es buscara en aquesta ruta per importar les FAQs'}
+              </span>
+            </div>
             <strong>{FIXED_DRIVE_PATH} / {FIXED_SPREADSHEET_TITLE}</strong>
             <p className="selected-sheet-helper">Pestanya: {FIXED_WORKSHEET_NAME}</p>
           </div>
@@ -1021,7 +1026,7 @@ export default function App() {
                 </div>
 
                 <p className="muted">
-                  El document utilitzat sera sempre `El meu Drive / UPC / FAQs / FAQs`, a la pestanya `FAQs`.
+                  El sistema buscara les FAQs revisades a `El meu Drive / UPC / FAQs / FAQs`, dins de la pestanya `FAQs`.
                 </p>
 
                 <div className="action-stack">
