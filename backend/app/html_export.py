@@ -180,7 +180,11 @@ def render_upc_faqaccordion(items: list[dict[str, str]]) -> str:
     out.append("<p>")
     out.append("<style>")
     out.append(
-        """[data-upc-faq-toggle="1"]:focus { box-shadow: none !important; }
+        """#faqTopicAccordion > .accordion-item:last-of-type,
+#faqTopicAccordion .accordion[data-upc-faq-accordion="1"] > .accordion-item:last-of-type {
+  border-bottom: 0 !important;
+}
+[data-upc-faq-toggle="1"]:focus { box-shadow: none !important; }
 [data-upc-faq-toggle="1"]::after {
   content: "";
   position: absolute;
