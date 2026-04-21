@@ -271,6 +271,10 @@ export default function App() {
   const [generatorMissingSheet, setGeneratorMissingSheet] = useState(false)
   const [scrapeVisualProgress, setScrapeVisualProgress] = useState(0)
   const [copyFeedbackVisible, setCopyFeedbackVisible] = useState(false)
+  const [logsCollapsed, setLogsCollapsed] = useState(false)
+  const [accountCollapsed, setAccountCollapsed] = useState(false)
+  const [driveCollapsed, setDriveCollapsed] = useState(false)
+  const [shareCollapsed, setShareCollapsed] = useState(false)
   const [googleBusy, setGoogleBusy] = useState(false)
   const [lastAutoExportedJobId, setLastAutoExportedJobId] = useState('')
 
@@ -920,6 +924,7 @@ export default function App() {
   const scrapeInlineProgress = Math.round(scrapeVisualProgress)
   const visibleLogs = [...(selectedJob?.logs || []), ...activityLogs]
   const isGoogleConnected = Boolean(googleSession?.connected)
+  const isScrapeView = activeView === 'scrape'
 
   useEffect(() => {
     if (!showScrapeInlineProgress) {
@@ -945,164 +950,231 @@ export default function App() {
 
   const googleSessionPanel = (
     <aside className="panel side-panel google-session-panel">
-      <div className="account-card">
-        <div className="compact-card-head">
+      <div className={`selected-sheet-card compact-side-card sidebar-unified-card account-card${accountCollapsed ? ' is-collapsed' : ''}`}>
+        <div
+          className="compact-card-head side-card-toggle-head"
+          role="button"
+          tabIndex={0}
+          aria-expanded={!accountCollapsed}
+          aria-label={accountCollapsed ? 'Mostrar compte Google' : 'Amagar compte Google'}
+          onClick={() => setAccountCollapsed((current) => !current)}
+          onKeyDown={(event) => {
+            if (event.key === 'Enter' || event.key === ' ') {
+              event.preventDefault()
+              setAccountCollapsed((current) => !current)
+            }
+          }}
+        >
           <div className="title-row-inline compact-inline-head">
             <img className="panel-icon google-badge inline" src={googleLogo} alt="" aria-hidden="true" />
             <strong>Compte Google</strong>
           </div>
+          <span className="logs-toggle-button side-card-toggle-button" aria-hidden="true">
+            <span className={`logs-toggle-icon${accountCollapsed ? '' : ' expanded'}`} aria-hidden="true" />
+          </span>
         </div>
-        {googleSession?.connected && googleSession?.profile_picture ? (
-          <img
-            className="panel-icon google-avatar"
-            src={googleSession.profile_picture}
-            alt={googleProfileLabel}
-            referrerPolicy="no-referrer"
-          />
-        ) : null}
-        {googleSession?.connected && (
-          <div className="google-profile-card">
-            <strong>{googleProfileLabel}</strong>
-            {googleSession?.profile_email && <span>{googleSession.profile_email}</span>}
+        <div className={`collapsible-region${accountCollapsed ? ' is-collapsed' : ''}`}>
+          <div className="collapsible-region-inner">
+            {googleSession?.connected && googleSession?.profile_picture ? (
+              <img
+                className="panel-icon google-avatar"
+                src={googleSession.profile_picture}
+                alt={googleProfileLabel}
+                referrerPolicy="no-referrer"
+              />
+            ) : null}
+            {googleSession?.connected && (
+              <div className="google-profile-card">
+                <strong>{googleProfileLabel}</strong>
+                {googleSession?.profile_email && <span>{googleSession.profile_email}</span>}
+              </div>
+            )}
+            {googleSession?.connected ? (
+              <div className="google-status-actions">
+                <p className="google-status-row connected">
+                  <span className="status done">Connectat</span>
+                </p>
+                <button
+                  type="button"
+                  className="google-session-button compact"
+                  onClick={logoutGoogle}
+                  disabled={googleBusy}
+                >
+                  {googleBusy ? 'Tancant sessio...' : 'Tancar sessio'}
+                </button>
+              </div>
+            ) : (
+              <>
+                <p className="google-status-row disconnected">
+                  <img className="panel-icon google-badge inline" src={googleLogo} alt="" aria-hidden="true" />
+                  <span className="status queued">No connectat</span>
+                </p>
+                <div className="action-stack">
+                  <button
+                    type="button"
+                    className="google-session-button"
+                    onClick={connectGoogle}
+                    disabled={googleBusy}
+                  >
+                    {googleBusy ? 'Connectant...' : 'Iniciar sessio amb Google'}
+                  </button>
+                </div>
+              </>
+            )}
           </div>
-        )}
-        {googleSession?.connected ? (
-          <div className="google-status-actions">
-            <p className="google-status-row connected">
-              <span className="status done">Connectat</span>
-            </p>
-            <button
-              type="button"
-              className="google-session-button compact"
-              onClick={logoutGoogle}
-              disabled={googleBusy}
-            >
-              {googleBusy ? 'Tancant sessio...' : 'Tancar sessio'}
-            </button>
-          </div>
-        ) : (
-          <>
-            <p className="google-status-row disconnected">
-              <img className="panel-icon google-badge inline" src={googleLogo} alt="" aria-hidden="true" />
-              <span className="status queued">No connectat</span>
-            </p>
-            <div className="action-stack">
-              <button
-                type="button"
-                className="google-session-button"
-                onClick={connectGoogle}
-                disabled={googleBusy}
-              >
-                {googleBusy ? 'Connectant...' : 'Iniciar sessio amb Google'}
-              </button>
-            </div>
-          </>
-        )}
+        </div>
       </div>
       {googleSession?.connected && (
         <div className="drive-browser-card">
-          <div className="selected-sheet-card compact-side-card">
-            <div className="compact-card-head">
+          <div className={`selected-sheet-card compact-side-card sidebar-unified-card${driveCollapsed ? ' is-collapsed' : ''}`}>
+            <div
+              className="compact-card-head side-card-toggle-head"
+              role="button"
+              tabIndex={0}
+              aria-expanded={!driveCollapsed}
+              aria-label={driveCollapsed ? 'Mostrar Google Drive' : 'Amagar Google Drive'}
+              onClick={() => setDriveCollapsed((current) => !current)}
+              onKeyDown={(event) => {
+                if (event.key === 'Enter' || event.key === ' ') {
+                  event.preventDefault()
+                  setDriveCollapsed((current) => !current)
+                }
+              }}
+            >
               <div className="title-row-inline compact-inline-head">
                 <img className="panel-icon google-badge inline" src={googleDriveLogo} alt="" aria-hidden="true" />
                 <strong>Google Drive</strong>
               </div>
-              <span className="drive-item-kind">Arxius</span>
+              <span className="logs-toggle-button side-card-toggle-button" aria-hidden="true">
+                <span className={`logs-toggle-icon${driveCollapsed ? '' : ' expanded'}`} aria-hidden="true" />
+              </span>
             </div>
-            <label className="field drive-select-field">
-              <span className="field-with-help">
-                <span>Arxiu FAQ</span>
-                <details className="inline-help">
-                  <summary>?</summary>
-                  <div className="inline-help-popover">Ruta FAQs per defecte: {FIXED_DRIVE_PATH}</div>
-                </details>
-              </span>
-              <select
-                value={selectedFaqSpreadsheetId}
-                onChange={(event) => {
-                  const nextId = event.target.value
-                  const nextSheet = availableFaqSheets.find((item) => item.id === nextId)
-                  setSelectedFaqSpreadsheetId(nextId)
-                  setSelectedFaqSpreadsheetTitle(nextSheet?.name || FIXED_SPREADSHEET_TITLE)
-                }}
-                disabled={driveListBusy || !availableFaqSheets.length}
-              >
-                {!availableFaqSheets.length ? (
-                  <option value="">No hi ha fitxers disponibles</option>
-                ) : (
-                  availableFaqSheets.map((item) => (
-                    <option key={item.id} value={item.id}>{item.name}</option>
-                  ))
+            <div className={`collapsible-region${driveCollapsed ? ' is-collapsed' : ''}`}>
+              <div className="collapsible-region-inner">
+                <label className="field drive-select-field">
+                  <span className="field-with-help">
+                    <span>Arxiu FAQ</span>
+                    <details className="inline-help">
+                      <summary>?</summary>
+                      <div className="inline-help-popover">Ruta FAQs per defecte: {FIXED_DRIVE_PATH}</div>
+                    </details>
+                  </span>
+                  <select
+                    value={selectedFaqSpreadsheetId}
+                    onChange={(event) => {
+                      const nextId = event.target.value
+                      const nextSheet = availableFaqSheets.find((item) => item.id === nextId)
+                      setSelectedFaqSpreadsheetId(nextId)
+                      setSelectedFaqSpreadsheetTitle(nextSheet?.name || FIXED_SPREADSHEET_TITLE)
+                    }}
+                    disabled={driveListBusy || !availableFaqSheets.length}
+                  >
+                    {!availableFaqSheets.length ? (
+                      <option value="">No hi ha fitxers disponibles</option>
+                    ) : (
+                      availableFaqSheets.map((item) => (
+                        <option key={item.id} value={item.id}>{item.name}</option>
+                      ))
+                    )}
+                  </select>
+                </label>
+                {isScrapeView && (
+                  <label className="field drive-select-field">
+                    <span className="field-with-help">
+                      <span>Configuracio CSV</span>
+                      <details className="inline-help">
+                        <summary>?</summary>
+                        <div className="inline-help-popover">Ruta configuracions per defecte: UPC / FAQs / Configuracions</div>
+                      </details>
+                    </span>
+                    <select
+                      value={selectedConfigFileId}
+                      onChange={(event) => {
+                        const nextId = event.target.value
+                        const nextConfig = availableConfigFiles.find((item) => item.id === nextId)
+                        if (!nextId || !nextConfig) {
+                          setSelectedConfigFileId('')
+                          setSelectedConfigFileName('')
+                          return
+                        }
+                        loadSelectedConfigFile(nextId, nextConfig.name).catch(() => {})
+                      }}
+                      disabled={driveListBusy || !availableConfigFiles.length}
+                    >
+                      {!availableConfigFiles.length ? (
+                        <option value="">No hi ha configuracions disponibles</option>
+                      ) : (
+                        availableConfigFiles.map((item) => (
+                          <option key={item.id} value={item.id}>{item.name}</option>
+                        ))
+                      )}
+                    </select>
+                  </label>
                 )}
-              </select>
-            </label>
-            <label className="field drive-select-field">
-              <span className="field-with-help">
-                <span>Configuracio CSV</span>
-                <details className="inline-help">
-                  <summary>?</summary>
-                  <div className="inline-help-popover">Ruta configuracions per defecte: UPC / FAQs / Configuracions</div>
-                </details>
-              </span>
-              <select
-                value={selectedConfigFileId}
-                onChange={(event) => {
-                  const nextId = event.target.value
-                  const nextConfig = availableConfigFiles.find((item) => item.id === nextId)
-                  if (!nextId || !nextConfig) {
-                    setSelectedConfigFileId('')
-                    setSelectedConfigFileName('')
-                    return
-                  }
-                  loadSelectedConfigFile(nextId, nextConfig.name).catch(() => {})
-                }}
-                disabled={driveListBusy || !availableConfigFiles.length}
-              >
-                {!availableConfigFiles.length ? (
-                  <option value="">No hi ha configuracions disponibles</option>
-                ) : (
-                  availableConfigFiles.map((item) => (
-                    <option key={item.id} value={item.id}>{item.name}</option>
-                  ))
-                )}
-              </select>
-            </label>
+              </div>
+            </div>
           </div>
 
-          <div className="selected-sheet-card compact-side-card share-side-card">
-            <div className="compact-card-head">
-              <div className="share-head">
-                <div className="title-row-inline compact-inline-head">
-                  <img className="panel-icon google-badge inline" src={googleGroupsIcon} alt="" aria-hidden="true" />
-                  <span className="field-label-strong">Compartir amb</span>
-                </div>
-                <button type="button" className="share-add-button" onClick={addShareRecipient}>+</button>
-              </div>
-              <span className="drive-item-kind">{selectedFaqSheet?.name || selectedFaqSpreadsheetTitle || FIXED_SPREADSHEET_TITLE}</span>
-            </div>
-            <div className="sheet-share-block">
-              <div className="share-recipient-list">
-                {shareRecipients.map((recipient, index) => (
-                  <div key={recipient.id} className="share-recipient-row">
-                    <input
-                      type="email"
-                      value={recipient.value}
-                      onChange={(event) => updateShareRecipient(recipient.id, event.target.value)}
-                      placeholder={index === 0 ? 'nom.cognom@upc.edu' : 'altra.persona@upc.edu'}
-                    />
-                    {shareRecipients.length > 1 && (
-                      <button type="button" className="ghost compact-ghost" onClick={() => removeShareRecipient(recipient.id)}>
-                        -
-                      </button>
-                    )}
+          {isScrapeView && (
+            <div className={`selected-sheet-card compact-side-card sidebar-unified-card share-side-card${shareCollapsed ? ' is-collapsed' : ''}`}>
+              <div
+                className="compact-card-head side-card-toggle-head"
+                role="button"
+                tabIndex={0}
+                aria-expanded={!shareCollapsed}
+                aria-label={shareCollapsed ? 'Mostrar compartir' : 'Amagar compartir'}
+                onClick={() => setShareCollapsed((current) => !current)}
+                onKeyDown={(event) => {
+                  if (event.key === 'Enter' || event.key === ' ') {
+                    event.preventDefault()
+                    setShareCollapsed((current) => !current)
+                  }
+                }}
+              >
+                <div className="share-head">
+                  <div className="title-row-inline compact-inline-head">
+                    <img className="panel-icon google-badge inline" src={googleGroupsIcon} alt="" aria-hidden="true" />
+                    <strong className="field-label-strong">Compartir amb</strong>
                   </div>
-                ))}
+                </div>
+                <span className="logs-toggle-button side-card-toggle-button" aria-hidden="true">
+                  <span className={`logs-toggle-icon${shareCollapsed ? '' : ' expanded'}`} aria-hidden="true" />
+                </span>
               </div>
-              <button type="button" className="secondary" onClick={shareSelectedFaqFile} disabled={shareBusy || !selectedFaqSpreadsheetId}>
-                {shareBusy ? 'Compartint...' : 'Compartir arxiu'}
-              </button>
+              <div className={`collapsible-region${shareCollapsed ? ' is-collapsed' : ''}`}>
+                <div className="collapsible-region-inner">
+                  <div className="compact-card-head">
+                    <span className="drive-item-kind">{selectedFaqSheet?.name || selectedFaqSpreadsheetTitle || FIXED_SPREADSHEET_TITLE}</span>
+                  </div>
+                  <div className="sheet-share-block">
+                    <div className="share-recipient-list">
+                      {shareRecipients.map((recipient, index) => (
+                        <div key={recipient.id} className="share-recipient-row">
+                          <input
+                            type="email"
+                            value={recipient.value}
+                            onChange={(event) => updateShareRecipient(recipient.id, event.target.value)}
+                            placeholder={index === 0 ? 'nom.cognom@upc.edu' : 'altra.persona@upc.edu'}
+                          />
+                          {shareRecipients.length > 1 && (
+                            <button type="button" className="ghost compact-ghost" onClick={() => removeShareRecipient(recipient.id)}>
+                              -
+                            </button>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                    <div className="share-action-row">
+                      <button type="button" className="secondary" onClick={shareSelectedFaqFile} disabled={shareBusy || !selectedFaqSpreadsheetId}>
+                        {shareBusy ? 'Compartint...' : 'Compartir arxiu'}
+                      </button>
+                      <button type="button" className="share-add-button" onClick={addShareRecipient}>+</button>
+                    </div>
+                  </div>
+                </div>
+              </div>
             </div>
-          </div>
+          )}
         </div>
       )}
     </aside>
@@ -1187,108 +1259,137 @@ export default function App() {
             {googleSessionPanel}
 
             <div className="main-stack">
-              <article className="panel wide">
-                <div className="section-head scrape-header">
-                  <div className="title-row-inline">
-                    <img className="section-illustration" src={downloadLogo} alt="" aria-hidden="true" />
-                    <h2>Fonts i descàrrega</h2>
-                  </div>
-                  <div className="config-tools">
-                    <button type="button" className="secondary" onClick={saveConfigToDrive} disabled={saveConfigBusy || !googleSession?.connected}>
-                      {saveConfigBusy ? 'Guardant...' : 'Guardar config'}
-                    </button>
-                    <button type="button" className="secondary" onClick={addTopic}>Afegir topic</button>
-                  </div>
-                </div>
-
-                <div className="topic-stack">
-                  {sources.map((group, index) => (
-                    <section key={group.id} className="topic-card">
-                      <div className="topic-head">
-                        <label className="field grow">
-                          <span>Topic</span>
-                          <input
-                            type="text"
-                            value={group.topic}
-                            onChange={(event) => updateTopic(group.id, 'topic', event.target.value)}
-                            placeholder={`Topic ${index + 1}`}
-                          />
-                        </label>
-                        <button type="button" className="ghost" onClick={() => removeTopic(group.id)}>Eliminar topic</button>
+              <div className="main-stack-frame">
+                <article className="panel wide scrape-primary-card">
+                  <div className="scrape-inner-card">
+                    <div className="section-head scrape-header">
+                      <div className="title-row-inline">
+                        <img className="section-illustration" src={downloadLogo} alt="" aria-hidden="true" />
+                        <h2>Fonts i descàrrega</h2>
                       </div>
+                      <div className="config-tools">
+                        <button type="button" className="secondary" onClick={saveConfigToDrive} disabled={saveConfigBusy || !googleSession?.connected}>
+                          {saveConfigBusy ? 'Guardant...' : 'Guardar config'}
+                        </button>
+                        <button type="button" className="secondary" onClick={addTopic}>Afegir topic</button>
+                      </div>
+                    </div>
 
-                      {group.urls.map((url) => (
-                        <div key={url.id} className="url-row">
-                          <label className="url-toggle">
-                            <input
-                              type="checkbox"
-                              checked={url.enabled !== false}
-                              onChange={(event) => updateTopic(group.id, url.id, { enabled: event.target.checked })}
-                            />
-                            <span>{url.enabled !== false ? 'Activa' : 'Pausada'}</span>
-                          </label>
-                          <input
-                            type="url"
-                            value={url.value}
-                            onChange={(event) => updateTopic(group.id, url.id, { value: event.target.value })}
-                            placeholder="https://web.upc.edu/pagina-faq"
-                          />
-                          <button type="button" className="ghost" onClick={() => removeUrl(group.id, url.id)}>Eliminar URL</button>
-                        </div>
-                      ))}
+                    <div className="topic-stack">
+                      {sources.map((group, index) => (
+                        <section key={group.id} className="topic-card">
+                          <div className="topic-head">
+                            <label className="field grow">
+                              <span>Topic</span>
+                              <input
+                                type="text"
+                                value={group.topic}
+                                onChange={(event) => updateTopic(group.id, 'topic', event.target.value)}
+                                placeholder={`Topic ${index + 1}`}
+                              />
+                            </label>
+                            <button type="button" className="ghost" onClick={() => removeTopic(group.id)}>Eliminar topic</button>
+                          </div>
 
-                      <button type="button" className="secondary" onClick={() => addUrl(group.id)}>Afegir URL</button>
-                    </section>
-                  ))}
-                </div>
-
-                <div className="config-grid">
-                </div>
-
-                <div className="action-bar">
-                  <div className="action-inline-group">
-                    {isGoogleConnected ? (
-                      <>
-                        <button type="button" onClick={startScrape} disabled={isScrapeBusy}>{isScrapeBusy ? 'Descarregant...' : 'Descarregar FAQs'}</button>
-                        {showScrapeInlineProgress && (
-                          <div className="mini-progress-row">
-                            <div className="mini-progress" aria-live="polite" aria-label={`Descarregant FAQs, ${scrapeInlineProgress}%`}>
-                              <div className="mini-progress-bar">
-                                <span style={{ width: `${scrapeInlineProgress}%` }} />
-                              </div>
-                              <strong>{`${scrapeInlineProgress}%`}</strong>
+                          {group.urls.map((url) => (
+                            <div key={url.id} className="url-row">
+                              <label className="url-toggle">
+                                <input
+                                  type="checkbox"
+                                  checked={url.enabled !== false}
+                                  onChange={(event) => updateTopic(group.id, url.id, { enabled: event.target.checked })}
+                                />
+                                <span>{url.enabled !== false ? 'Activa' : 'Pausada'}</span>
+                              </label>
+                              <input
+                                type="url"
+                                value={url.value}
+                                onChange={(event) => updateTopic(group.id, url.id, { value: event.target.value })}
+                                placeholder="https://web.upc.edu/pagina-faq"
+                              />
+                              <button type="button" className="ghost" onClick={() => removeUrl(group.id, url.id)}>Eliminar URL</button>
                             </div>
-                            {scrapeInlineProgress >= 100 && <span className="progress-complete-label">Completat</span>}
+                          ))}
+
+                          <button type="button" className="secondary" onClick={() => addUrl(group.id)}>Afegir URL</button>
+                        </section>
+                      ))}
+                    </div>
+
+                    <div className="config-grid">
+                    </div>
+
+                    <div className="action-bar">
+                      <div className="action-inline-group">
+                        {isGoogleConnected ? (
+                          <>
+                            <button type="button" onClick={startScrape} disabled={isScrapeBusy}>{isScrapeBusy ? 'Descarregant...' : 'Descarregar FAQs'}</button>
+                            {showScrapeInlineProgress && (
+                              <div className="mini-progress-row">
+                                <div className="mini-progress" aria-live="polite" aria-label={`Descarregant FAQs, ${scrapeInlineProgress}%`}>
+                                  <div className="mini-progress-bar">
+                                    <span style={{ width: `${scrapeInlineProgress}%` }} />
+                                  </div>
+                                  <strong>{`${scrapeInlineProgress}%`}</strong>
+                                </div>
+                                {scrapeInlineProgress >= 100 && <span className="progress-complete-label">Completat</span>}
+                              </div>
+                            )}
+                          </>
+                        ) : (
+                          <p className="scrape-login-warning">No has iniciat sessio de Google. Connecta&apos;t per descarregar FAQs.</p>
+                        )}
+                      </div>
+                      <p className="muted">
+                        {validSources.length} URLs valides
+                        {invalidSources.length > 0 ? ` · ${invalidSources.length} no vàlides` : ''}
+                        {enabledSourceCount > 0 ? ` · ${enabledSourceCount} actives` : ''}
+                        {disabledSourceCount > 0 ? ` · ${disabledSourceCount} desactivades` : ''}
+                      </p>
+                    </div>
+                  </div>
+                </article>
+
+                {isGoogleConnected && (
+                  <article
+                    className="panel wide scrape-logs-card logs-collapsible-card"
+                    role="button"
+                    tabIndex={0}
+                    aria-expanded={!logsCollapsed}
+                    aria-label={logsCollapsed ? 'Mostrar logs' : 'Amagar logs'}
+                    onClick={() => setLogsCollapsed((current) => !current)}
+                    onKeyDown={(event) => {
+                      if (event.key === 'Enter' || event.key === ' ') {
+                        event.preventDefault()
+                        setLogsCollapsed((current) => !current)
+                      }
+                    }}
+                  >
+                    <div className="section-head">
+                      <div>
+                        <h2>Logs</h2>
+                      </div>
+                      <span className="logs-toggle-button" aria-hidden="true">
+                        <span className={`logs-toggle-icon${logsCollapsed ? '' : ' expanded'}`} aria-hidden="true" />
+                      </span>
+                    </div>
+                    <div className={`collapsible-region${logsCollapsed ? ' is-collapsed' : ''}`}>
+                      <div className="collapsible-region-inner">
+                        {jobResult && (
+                          <div className="summary-grid">
+                            <div>URLs processades: {jobResult.stats?.total_urls ?? 0}</div>
+                            <div>FAQs trobades: {jobResult.stats?.total_faqs ?? 0}</div>
+                            <div>Files generades: {jobResult.stats?.total_rows ?? 0}</div>
+                            <div>Errors: {jobResult.stats?.total_errors ?? 0}</div>
                           </div>
                         )}
-                      </>
-                    ) : (
-                      <p className="scrape-login-warning">No has iniciat sessio de Google. Connecta&apos;t per descarregar FAQs.</p>
-                    )}
-                  </div>
-                  <p className="muted">
-                    {validSources.length} URLs valides
-                    {invalidSources.length > 0 ? ` · ${invalidSources.length} no vàlides` : ''}
-                    {enabledSourceCount > 0 ? ` · ${enabledSourceCount} actives` : ''}
-                    {disabledSourceCount > 0 ? ` · ${disabledSourceCount} desactivades` : ''}
-                  </p>
-                </div>
-              </article>
 
-              {isGoogleConnected && (
-                <article className="panel wide">
-                  {jobResult && (
-                    <div className="summary-grid">
-                      <div>URLs processades: {jobResult.stats?.total_urls ?? 0}</div>
-                      <div>FAQs trobades: {jobResult.stats?.total_faqs ?? 0}</div>
-                      <div>Files generades: {jobResult.stats?.total_rows ?? 0}</div>
-                      <div>Errors: {jobResult.stats?.total_errors ?? 0}</div>
+                        <pre>{visibleLogs.join('\n') || 'Sense logs encara.'}</pre>
+                      </div>
                     </div>
-                  )}
-
-                  <pre>{visibleLogs.join('\n') || 'Sense logs encara.'}</pre>
-                </article>
-              )}
+                  </article>
+                )}
+              </div>
             </div>
           </section>
         )}
@@ -1300,66 +1401,69 @@ export default function App() {
             </div>
 
             <div className="main-stack">
-              <article className="panel">
-                <div className="section-head">
-                  <div className="title-with-icon">
-                    <div className="title-row-inline">
-                      <img className="section-illustration" src={htmlLogo} alt="" aria-hidden="true" />
-                      <h2>Exporta codi font per Genweb</h2>
+              <div className="main-stack-frame">
+                <article className="panel export-primary-card">
+                  <div className="section-head">
+                    <div className="title-with-icon">
+                      <div className="title-row-inline">
+                        <img className="section-illustration" src={htmlLogo} alt="" aria-hidden="true" />
+                        <h2>Exporta codi font per Genweb</h2>
+                      </div>
                     </div>
                   </div>
-                </div>
 
-                <p className="muted">
-                  El sistema treballara amb l'arxiu seleccionat de `El meu Drive / UPC / FAQs` i amb la pestanya triada.
-                </p>
+                  <p className="muted">
+                    Es generarà el codi font de les FAQs amb estat Aprovat.
+                    {' '}
+                    Arxiu seleccionat: <strong>{selectedFaqSheet?.name || selectedFaqSpreadsheetTitle || FIXED_SPREADSHEET_TITLE}</strong>.
+                  </p>
 
-                <div className="action-stack">
-                  {isGoogleConnected ? (
-                    <>
-                      <button type="button" onClick={generateHtmlFromExternalSource} disabled={generatorBusy}>{generatorBusy ? 'Generant...' : 'Generar codi font'}</button>
-                      {generatorMissingSheet ? (
-                        <div className="generator-error-box" role="alert">
-                          No hi ha cap arxiu Excel amb FAQs.
-                        </div>
-                      ) : (generatorBusy || generatorCompleted) && (
-                        <div className="mini-progress-row">
-                          <div className="mini-progress" aria-live="polite" aria-label={`Generant codi, ${generatorProgress}%`}>
-                            <div className="mini-progress-bar">
-                              <span style={{ width: `${generatorProgress}%` }} />
-                            </div>
-                            <strong>{`${generatorProgress}%`}</strong>
+                  <div className="action-stack">
+                    {isGoogleConnected ? (
+                      <>
+                        <button type="button" onClick={generateHtmlFromExternalSource} disabled={generatorBusy}>{generatorBusy ? 'Generant...' : 'Generar codi font'}</button>
+                        {generatorMissingSheet ? (
+                          <div className="generator-error-box" role="alert">
+                            No hi ha cap arxiu Excel amb FAQs.
                           </div>
-                          {generatorCompleted && <span className="progress-complete-label">Completat</span>}
-                        </div>
-                      )}
-                    </>
-                  ) : (
-                    <p className="scrape-login-warning">No has iniciat sessio de Google. Connecta&apos;t per generar el codi font.</p>
-                  )}
-                </div>
-              </article>
-
-              <article className="panel wide">
-                <div className="section-head">
-                  <div>
-                 
-                    <h2>Codi font</h2>
+                        ) : (generatorBusy || generatorCompleted) && (
+                          <div className="mini-progress-row">
+                            <div className="mini-progress" aria-live="polite" aria-label={`Generant codi, ${generatorProgress}%`}>
+                              <div className="mini-progress-bar">
+                                <span style={{ width: `${generatorProgress}%` }} />
+                              </div>
+                              <strong>{`${generatorProgress}%`}</strong>
+                            </div>
+                            {generatorCompleted && <span className="progress-complete-label">Completat</span>}
+                          </div>
+                        )}
+                      </>
+                    ) : (
+                      <p className="scrape-login-warning">No has iniciat sessió de Google. Connecta&apos;t per generar el codi font.</p>
+                    )}
                   </div>
-                </div>
-                <pre className="code-block">{lastGeneratedCode || 'Encara no s’ha generat cap HTML.'}</pre>
-                <div className="code-hint-row">
-                  {lastGeneratedCode.trim() && (
-                    <>
-                      <button type="button" className="copy-inline-button" onClick={copyGeneratedCode}>
-                        Copia
-                      </button>
-                      {copyFeedbackVisible && <span className="copy-success-indicator">?</span>}
-                    </>
-                  )}
-                  <p className="muted">Enganxa aquest codi en un bloc HTML de Genweb. El resultat ja ve agrupat i amb el comportament d’acordió.</p>
-                </div>
-              </article>
+                </article>
+
+                <article className="panel wide export-code-card">
+                  <div className="section-head">
+                    <div>
+                      <h2>Codi font</h2>
+                    </div>
+                  </div>
+                  <pre className="code-block">{lastGeneratedCode || 'Encara no s’ha generat cap HTML.'}</pre>
+                  <div className="code-hint-row">
+                    {lastGeneratedCode.trim() && (
+                      <>
+                        <button type="button" className="copy-inline-button" onClick={copyGeneratedCode}>
+                          Copia
+                        </button>
+                        {copyFeedbackVisible && <span className="copy-success-indicator">?</span>}
+                      </>
+                    )}
+                    <p className="muted">Enganxa aquest codi en un bloc HTML de Genweb. El resultat ja ve agrupat i amb el comportament d’acordió.</p>
+                  </div>
+                </article>
+              </div>
             </div>
           </section>
         )}
