@@ -1,5 +1,6 @@
 import os
 import re
+import json
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List
@@ -20,8 +21,10 @@ except ImportError:
 
 FIXED_DRIVE_ROOT_FOLDER = "UPC"
 FIXED_DRIVE_FAQS_FOLDER = "FAQs"
+FIXED_DRIVE_CONFIGS_FOLDER = "Configuracions"
 FIXED_SPREADSHEET_TITLE = "FAQs"
 FIXED_WORKSHEET_NAME = "FAQs"
+DEFAULT_WORKSHEET_TITLES = {"Sheet1", "Full 1"}
 
 
 def get_oauth_client(oauth_client_json="oauth_client.json", token_file="token.json"):
@@ -262,15 +265,19 @@ def list_drive_items_oauth(
     *,
     token_file: str = "token.json",
     parent_id: str | None = None,
+    include_files: bool = False,
 ) -> list[dict[str, str]]:
     creds = _get_oauth_credentials(token_file=token_file)
+    mime_filters = [
+        "mimeType = 'application/vnd.google-apps.folder'",
+        "mimeType = 'application/vnd.google-apps.spreadsheet'",
+    ]
+    if include_files:
+        mime_filters.append("mimeType != 'application/vnd.google-apps.folder'")
     query_parent = (parent_id or "root").strip() or "root"
     query = (
         f"'{query_parent}' in parents and trashed = false and "
-        "("
-        "mimeType = 'application/vnd.google-apps.folder' or "
-        "mimeType = 'application/vnd.google-apps.spreadsheet'"
-        ")"
+        f"({' or '.join(mime_filters)})"
     )
     params = {
         "q": query,
@@ -296,6 +303,8 @@ def list_drive_items_oauth(
             kind = "folder"
         elif mime_type == "application/vnd.google-apps.spreadsheet":
             kind = "spreadsheet"
+        elif include_files:
+            kind = "file"
         else:
             continue
         items.append(
@@ -390,6 +399,28 @@ def _create_drive_folder(*, creds: OAuthCredentials, parent_id: str, name: str) 
     )
 
 
+def _find_drive_file(*, creds: OAuthCredentials, parent_id: str, name: str) -> dict[str, str] | None:
+    query = (
+        f"'{parent_id}' in parents and trashed = false and "
+        "mimeType != 'application/vnd.google-apps.folder' and "
+        f"name = '{_escape_drive_query_value(name)}'"
+    )
+    data = _drive_api_json(
+        method="GET",
+        creds=creds,
+        path="files",
+        params={
+            "q": query,
+            "fields": "files(id,name,mimeType)",
+            "pageSize": "10",
+            "supportsAllDrives": "true",
+            "includeItemsFromAllDrives": "true",
+        },
+    )
+    files = data.get("files") or []
+    return files[0] if files else None
+
+
 def _find_drive_spreadsheet(*, creds: OAuthCredentials, parent_id: str, name: str) -> dict[str, str] | None:
     query = (
         f"'{parent_id}' in parents and trashed = false and "
@@ -422,6 +453,186 @@ def _create_drive_spreadsheet(*, creds: OAuthCredentials, parent_id: str, name: 
             "name": name,
             "mimeType": "application/vnd.google-apps.spreadsheet",
             "parents": [parent_id],
+        },
+    )
+
+
+def _resolve_fixed_faqs_folder(*, creds: OAuthCredentials, create_missing: bool) -> dict[str, dict[str, str]]:
+    root_folder = _find_drive_folder(creds=creds, parent_id="root", name=FIXED_DRIVE_ROOT_FOLDER)
+    if root_folder is None:
+        if not create_missing:
+            raise RuntimeError(
+                f"No s'ha trobat cap document '{FIXED_SPREADSHEET_TITLE}' a {FIXED_DRIVE_ROOT_FOLDER}/{FIXED_DRIVE_FAQS_FOLDER}."
+            )
+        root_folder = _create_drive_folder(creds=creds, parent_id="root", name=FIXED_DRIVE_ROOT_FOLDER)
+
+    faqs_folder = _find_drive_folder(creds=creds, parent_id=root_folder["id"], name=FIXED_DRIVE_FAQS_FOLDER)
+    if faqs_folder is None:
+        if not create_missing:
+            raise RuntimeError(
+                f"No s'ha trobat cap document '{FIXED_SPREADSHEET_TITLE}' a {FIXED_DRIVE_ROOT_FOLDER}/{FIXED_DRIVE_FAQS_FOLDER}."
+            )
+        faqs_folder = _create_drive_folder(creds=creds, parent_id=root_folder["id"], name=FIXED_DRIVE_FAQS_FOLDER)
+
+    return {"root_folder": root_folder, "faqs_folder": faqs_folder}
+
+
+def _resolve_fixed_configs_folder(*, creds: OAuthCredentials, create_missing: bool) -> dict[str, dict[str, str]]:
+    folders = _resolve_fixed_faqs_folder(creds=creds, create_missing=create_missing)
+    configs_folder = _find_drive_folder(
+        creds=creds,
+        parent_id=folders["faqs_folder"]["id"],
+        name=FIXED_DRIVE_CONFIGS_FOLDER,
+    )
+    if configs_folder is None:
+        if not create_missing:
+            raise RuntimeError(
+                f"No s'ha trobat la carpeta {FIXED_DRIVE_ROOT_FOLDER}/{FIXED_DRIVE_FAQS_FOLDER}/{FIXED_DRIVE_CONFIGS_FOLDER}."
+            )
+        configs_folder = _create_drive_folder(
+            creds=creds,
+            parent_id=folders["faqs_folder"]["id"],
+            name=FIXED_DRIVE_CONFIGS_FOLDER,
+        )
+    return {"root_folder": folders["root_folder"], "faqs_folder": folders["faqs_folder"], "configs_folder": configs_folder}
+
+
+def list_fixed_faqs_spreadsheets_oauth(*, token_file: str = "token.json") -> list[dict[str, str]]:
+    creds = _get_oauth_credentials(token_file=token_file)
+    folders = _resolve_fixed_faqs_folder(creds=creds, create_missing=False)
+    items = list_drive_items_oauth(token_file=token_file, parent_id=folders["faqs_folder"]["id"])
+    return [item for item in items if item.get("kind") == "spreadsheet"]
+
+
+def list_fixed_config_files_oauth(*, token_file: str = "token.json") -> list[dict[str, str]]:
+    creds = _get_oauth_credentials(token_file=token_file)
+    folders = _resolve_fixed_configs_folder(creds=creds, create_missing=True)
+    items = list_drive_items_oauth(
+        token_file=token_file,
+        parent_id=folders["configs_folder"]["id"],
+        include_files=True,
+    )
+    return [
+        item
+        for item in items
+        if item.get("kind") == "file" and (item.get("name", "") or "").strip().lower().endswith(".csv")
+    ]
+
+
+def read_drive_text_file_oauth(*, token_file: str = "token.json", file_id: str) -> dict[str, str]:
+    creds = _get_oauth_credentials(token_file=token_file)
+    clean_file_id = (file_id or "").strip()
+    if not clean_file_id:
+        raise RuntimeError("Falta l'identificador del fitxer.")
+
+    headers = {"Authorization": f"Bearer {creds.token}"}
+    try:
+        metadata = requests.get(
+            f"https://www.googleapis.com/drive/v3/files/{clean_file_id}",
+            params={"fields": "id,name,mimeType", "supportsAllDrives": "true"},
+            headers=headers,
+            timeout=20,
+        )
+        metadata.raise_for_status()
+        meta_json = metadata.json()
+        response = requests.get(
+            f"https://www.googleapis.com/drive/v3/files/{clean_file_id}",
+            params={"alt": "media", "supportsAllDrives": "true"},
+            headers=headers,
+            timeout=20,
+        )
+        response.raise_for_status()
+    except Exception as exc:
+        raise RuntimeError(f"No s'ha pogut llegir el fitxer de Drive: {_format_google_error(exc)}") from exc
+
+    return {
+        "file_id": clean_file_id,
+        "name": (meta_json.get("name") or "").strip(),
+        "content": response.text,
+    }
+
+
+def save_config_text_to_drive_oauth(*, token_file: str = "token.json", name: str, content: str) -> dict[str, str]:
+    creds = _get_oauth_credentials(token_file=token_file)
+    folders = _resolve_fixed_configs_folder(creds=creds, create_missing=True)
+    clean_name = (name or "").strip()
+    if not clean_name:
+        raise RuntimeError("Cal indicar un nom de configuracio.")
+    if not clean_name.lower().endswith(".csv"):
+        clean_name = f"{clean_name}.csv"
+
+    existing = _find_drive_file(
+        creds=creds,
+        parent_id=folders["configs_folder"]["id"],
+        name=clean_name,
+    )
+
+    metadata = {"name": clean_name}
+    if existing is None:
+        metadata["parents"] = [folders["configs_folder"]["id"]]
+
+    boundary = "upcfaqconfigboundary"
+    multipart_body = (
+        f"--{boundary}\r\n"
+        "Content-Type: application/json; charset=UTF-8\r\n\r\n"
+        f"{json.dumps(metadata)}\r\n"
+        f"--{boundary}\r\n"
+        "Content-Type: text/csv; charset=UTF-8\r\n\r\n"
+        f"{content}\r\n"
+        f"--{boundary}--\r\n"
+    ).encode("utf-8")
+    headers = {
+        "Authorization": f"Bearer {creds.token}",
+        "Content-Type": f"multipart/related; boundary={boundary}",
+    }
+    url = "https://www.googleapis.com/upload/drive/v3/files"
+    method = "POST"
+    params = {"uploadType": "multipart", "supportsAllDrives": "true", "fields": "id,name"}
+    if existing is not None:
+        url = f"{url}/{existing['id']}"
+        method = "PATCH"
+
+    try:
+        response = requests.request(method=method, url=url, params=params, headers=headers, data=multipart_body, timeout=30)
+        response.raise_for_status()
+        payload = response.json()
+    except Exception as exc:
+        raise RuntimeError(f"No s'ha pogut guardar la configuracio a Drive: {_format_google_error(exc)}") from exc
+
+    return {"file_id": (payload.get("id") or "").strip(), "name": (payload.get("name") or clean_name).strip()}
+
+
+def share_drive_file_with_user_oauth(
+    *,
+    token_file: str = "token.json",
+    file_id: str,
+    email: str,
+    role: str = "writer",
+) -> None:
+    creds = _get_oauth_credentials(token_file=token_file)
+    clean_file_id = (file_id or "").strip()
+    clean_email = (email or "").strip()
+    clean_role = (role or "writer").strip()
+    if not clean_file_id:
+        raise RuntimeError("Falta l'identificador del fitxer a compartir.")
+    if not clean_email:
+        raise RuntimeError("Falta l'adreca de correu de la persona amb qui compartir el fitxer.")
+    if clean_role not in {"reader", "writer", "commenter"}:
+        raise RuntimeError("El rol de comparticio ha de ser reader, writer o commenter.")
+
+    _drive_api_json(
+        method="POST",
+        creds=creds,
+        path=f"files/{clean_file_id}/permissions",
+        params={
+            "sendNotificationEmail": "true",
+            "supportsAllDrives": "true",
+            "fields": "id",
+        },
+        json_body={
+            "type": "user",
+            "role": clean_role,
+            "emailAddress": clean_email,
         },
     )
 
@@ -496,6 +707,44 @@ def _format_google_error(e: Exception) -> str:
             return f"HTTP {code} - {txt[:300]}"
         return f"HTTP {code}"
     return str(e)
+
+
+def _is_empty_worksheet(worksheet) -> bool:
+    try:
+        values = worksheet.get_all_values()
+    except Exception:
+        return False
+    return not values or all((not row) or all((cell or "").strip() == "" for cell in row) for row in values)
+
+
+def _cleanup_default_worksheets(spreadsheet, keep_title: str, log=None) -> None:
+    def _log(message: str):
+        if log:
+            log(message)
+
+    keep = (keep_title or "").strip()
+    try:
+        worksheets = spreadsheet.worksheets()
+    except Exception:
+        return
+
+    removable = []
+    for worksheet in worksheets:
+        title = (worksheet.title or "").strip()
+        if not title or title == keep:
+            continue
+        if title in DEFAULT_WORKSHEET_TITLES and _is_empty_worksheet(worksheet):
+            removable.append(worksheet)
+
+    if len(worksheets) - len(removable) < 1:
+        return
+
+    for worksheet in removable:
+        try:
+            spreadsheet.del_worksheet(worksheet)
+            _log(f"Pestanya buida eliminada: {worksheet.title}")
+        except Exception:
+            continue
 
 
 def _open_sheet_lenient(client, spreadsheet_title: str, log=None):
@@ -790,11 +1039,15 @@ def export_rows_to_google_sheets_oauth(
         _log(f"Pestanya oberta: {worksheet_name}")
     except Exception:
         worksheets = sh.worksheets()
-        default_ws = worksheets[0] if len(worksheets) == 1 and (worksheets[0].title or "").strip() == "Sheet1" else None
+        default_ws = (
+            worksheets[0]
+            if len(worksheets) == 1 and (worksheets[0].title or "").strip() in DEFAULT_WORKSHEET_TITLES
+            else None
+        )
         if default_ws is not None:
             default_ws.update_title(worksheet_name)
             ws = default_ws
-            _log(f"Pestanya renombrada de Sheet1 a: {worksheet_name}")
+            _log(f"Pestanya renombrada a: {worksheet_name}")
         else:
             ws = sh.add_worksheet(
                 title=worksheet_name,
@@ -802,6 +1055,8 @@ def export_rows_to_google_sheets_oauth(
                 cols=max(11, len(SHEETS_COLUMNS)),
             )
             _log(f"Pestanya creada: {worksheet_name}")
+
+    _cleanup_default_worksheets(sh, worksheet_name, log=log)
 
     values = ws.get_all_values()
     is_truly_empty = not values or all((not r) or all((c or "").strip() == "" for c in r) for r in values)

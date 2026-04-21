@@ -24,7 +24,9 @@ from app.html_export import (
 from app.job_manager import job_manager
 from app.schemas import (
     GoogleConnectResponse,
+    GoogleDriveFileContentResponse,
     GoogleDriveListResponse,
+    GoogleFixedFaqsListResponse,
     GoogleSessionResponse,
     GoogleSheetsListResponse,
     GoogleWorksheetListResponse,
@@ -39,7 +41,11 @@ from app.schemas import (
     ReviewItemUpdateRequest,
     ReviewListResponse,
     ReviewUpdateResponse,
+    SaveConfigRequest,
+    SaveConfigResponse,
     ScrapeJobRequest,
+    ShareDriveFileRequest,
+    ShareDriveFileResponse,
     SheetsExportRequest,
     SheetsExportResponse,
     SourceHtmlExportResponse,
@@ -51,10 +57,15 @@ from app.sheets import (
     export_rows_to_google_sheets_oauth,
     get_google_session_status,
     list_drive_items_oauth,
+    list_fixed_config_files_oauth,
+    list_fixed_faqs_spreadsheets_oauth,
     list_spreadsheets_oauth,
     list_worksheets_oauth,
     logout_google_session,
+    read_drive_text_file_oauth,
     read_rows_from_sheets_oauth,
+    save_config_text_to_drive_oauth,
+    share_drive_file_with_user_oauth,
 )
 
 
@@ -393,6 +404,66 @@ def google_spreadsheet_worksheets(request: Request, spreadsheet_id: str):
     return {"spreadsheet_id": spreadsheet_id, "worksheets": worksheets}
 
 
+@app.get("/api/google/faqs/spreadsheets", response_model=GoogleFixedFaqsListResponse)
+def google_fixed_faqs_spreadsheets(request: Request):
+    token_file = _session_token_file(request)
+    try:
+        items = list_fixed_faqs_spreadsheets_oauth(token_file=token_file)
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return {"folder_path": "UPC/FAQs", "items": items}
+
+
+@app.get("/api/google/faqs/configurations", response_model=GoogleFixedFaqsListResponse)
+def google_fixed_configurations(request: Request):
+    token_file = _session_token_file(request)
+    try:
+        items = list_fixed_config_files_oauth(token_file=token_file)
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return {"folder_path": "UPC/FAQs/Configuracions", "items": items}
+
+
+@app.get("/api/google/drive/file-content", response_model=GoogleDriveFileContentResponse)
+def google_drive_file_content(request: Request, file_id: str):
+    token_file = _session_token_file(request)
+    try:
+        payload = read_drive_text_file_oauth(token_file=token_file, file_id=file_id)
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return payload
+
+
+@app.post("/api/google/faqs/configurations", response_model=SaveConfigResponse)
+def save_google_configuration(request: Request, payload: SaveConfigRequest):
+    token_file = _session_token_file(request)
+    try:
+        saved = save_config_text_to_drive_oauth(token_file=token_file, name=payload.name, content=payload.content)
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return {"file_id": saved["file_id"], "name": saved["name"], "status": "saved"}
+
+
+@app.post("/api/google/share-file", response_model=ShareDriveFileResponse)
+def google_share_file(request: Request, payload: ShareDriveFileRequest):
+    token_file = _session_token_file(request)
+    try:
+        share_drive_file_with_user_oauth(
+            token_file=token_file,
+            file_id=payload.file_id,
+            email=payload.email,
+            role=payload.role,
+        )
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return {
+        "file_id": payload.file_id,
+        "email": payload.email,
+        "role": payload.role,
+        "status": "shared",
+    }
+
+
 @app.post("/api/jobs/scrape", response_model=JobCreatedResponse)
 def create_scrape_job(payload: ScrapeJobRequest):
     sources = [(item.url, item.topic) for item in payload.sources]
@@ -553,17 +624,13 @@ async def export_html_from_source(
                 temp_file.write(await csv_file.read())
             rows = _read_csv_rows(temp_path)
         else:
-            if not (spreadsheet_title or "").strip() or not (worksheet_name or "").strip():
-                raise HTTPException(status_code=400, detail="Cal indicar el títol i la pestanya del Google Sheet.")
-            fixed_sheet = ensure_fixed_faqs_spreadsheet_oauth(
-                oauth_client_json=oauth_client_json,
-                token_file=_session_token_file(request),
-                create_missing=False,
-            )
+            clean_title = (spreadsheet_title or "").strip()
+            clean_worksheet = (worksheet_name or "").strip()
+            if not clean_title or not clean_worksheet:
+                raise HTTPException(status_code=400, detail="Cal indicar el titol i la pestanya del Google Sheet.")
             sheet_rows = read_rows_from_sheets_oauth(
-                spreadsheet_title=fixed_sheet["spreadsheet_title"],
-                worksheet_name=fixed_sheet["worksheet_name"],
-                spreadsheet_id=fixed_sheet["spreadsheet_id"],
+                spreadsheet_title=clean_title,
+                worksheet_name=clean_worksheet,
                 oauth_client_json=oauth_client_json,
                 token_file=_session_token_file(request),
                 create_if_missing=False,
@@ -608,15 +675,23 @@ def export_job_review_to_sheets(request: Request, job_id: str, payload: SheetsEx
         raise HTTPException(status_code=404, detail="Job not found")
 
     try:
-        fixed_sheet = ensure_fixed_faqs_spreadsheet_oauth(
-            oauth_client_json=payload.oauth_client_json,
-            token_file=_session_token_file(request),
-        )
+        spreadsheet_id = (payload.spreadsheet_id or "").strip()
+        if spreadsheet_id:
+            target_sheet = {
+                "spreadsheet_id": spreadsheet_id,
+                "spreadsheet_title": payload.spreadsheet_title,
+                "worksheet_name": payload.worksheet_name,
+            }
+        else:
+            target_sheet = ensure_fixed_faqs_spreadsheet_oauth(
+                oauth_client_json=payload.oauth_client_json,
+                token_file=_session_token_file(request),
+            )
         export_rows_to_google_sheets_oauth(
             rows=rows,
-            spreadsheet_title=fixed_sheet["spreadsheet_title"],
-            spreadsheet_id=fixed_sheet["spreadsheet_id"],
-            worksheet_name=fixed_sheet["worksheet_name"],
+            spreadsheet_title=target_sheet["spreadsheet_title"],
+            spreadsheet_id=target_sheet["spreadsheet_id"],
+            worksheet_name=target_sheet["worksheet_name"],
             oauth_client_json=payload.oauth_client_json,
             token_file=_session_token_file(request),
         )
@@ -627,6 +702,7 @@ def export_job_review_to_sheets(request: Request, job_id: str, payload: SheetsEx
     return {
         "job_id": job_id,
         "approved_rows": approved_rows,
-        "spreadsheet_title": fixed_sheet["spreadsheet_title"],
-        "worksheet_name": fixed_sheet["worksheet_name"],
+        "spreadsheet_title": target_sheet["spreadsheet_title"],
+        "worksheet_name": target_sheet["worksheet_name"],
     }
+

@@ -1,12 +1,14 @@
-﻿import { useEffect, useMemo, useState } from 'react'
+﻿import './App.css'
 import './App.css'
-import { useRef } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import upcRoundLogo from './assets/upc_logo_2.png'
 import upcFooterLogo from './assets/upc_logo.png'
 import homeLogo from './assets/home_logo.png'
 import faqsLogo from './assets/faqs1_logo.png'
 import downloadLogo from './assets/download.png'
 import htmlLogo from './assets/html-source-code.png'
+import googleDriveLogo from './assets/Google_Drive_logo.png'
+import googleGroupsIcon from './assets/Google_Groups_icon.png'
 import googleLogo from './assets/Google_logo.png'
 
 const defaultApiBase = `${window.location.protocol}//${window.location.hostname}:8000`
@@ -16,6 +18,7 @@ const GOOGLE_SESSION_KEY = 'upc-google-session-id'
 const FIXED_DRIVE_PATH = 'El meu Drive / UPC / FAQs'
 const FIXED_SPREADSHEET_TITLE = 'FAQs'
 const FIXED_WORKSHEET_NAME = 'FAQs'
+const DEFAULT_SHARE_EMAIL = ''
 
 const defaultSources = [
   {
@@ -29,9 +32,13 @@ const defaultState = {
   activeView: 'home',
   sources: defaultSources,
   debug: false,
-  generatorSheetTab: 'Revisio',
   lastGeneratedCode: '',
   lastSelectedJobId: '',
+  selectedFaqSpreadsheetId: '',
+  selectedFaqSpreadsheetTitle: FIXED_SPREADSHEET_TITLE,
+  selectedConfigFileId: '',
+  selectedConfigFileName: '',
+  shareRecipients: [{ id: 'default-share', value: DEFAULT_SHARE_EMAIL }],
 }
 
 function createEmptySource() {
@@ -39,6 +46,13 @@ function createEmptySource() {
     id: crypto.randomUUID(),
     topic: '',
     urls: [{ id: crypto.randomUUID(), value: '', enabled: true }],
+  }
+}
+
+function createShareRecipient(value = '') {
+  return {
+    id: crypto.randomUUID(),
+    value,
   }
 }
 
@@ -67,6 +81,21 @@ function normalizeSources(input) {
   }))
 
   return normalized.length > 0 ? normalized : defaultSources
+}
+
+function normalizeShareRecipients(input) {
+  if (!Array.isArray(input) || input.length === 0) {
+    return [createShareRecipient(DEFAULT_SHARE_EMAIL)]
+  }
+
+  const normalized = input
+    .map((recipient) => ({
+      id: typeof recipient?.id === 'string' && recipient.id ? recipient.id : crypto.randomUUID(),
+      value: typeof recipient?.value === 'string' ? recipient.value : '',
+    }))
+    .filter((recipient) => typeof recipient.value === 'string')
+
+  return normalized.length > 0 ? normalized : [createShareRecipient(DEFAULT_SHARE_EMAIL)]
 }
 
 function escapeCsvCell(value) {
@@ -153,7 +182,12 @@ function loadPersistedState() {
     const raw = window.localStorage.getItem(STORAGE_KEY)
     if (!raw) return defaultState
     const parsed = JSON.parse(raw)
-    return { ...defaultState, ...parsed, sources: normalizeSources(parsed.sources) }
+    return {
+      ...defaultState,
+      ...parsed,
+      sources: normalizeSources(parsed.sources),
+      shareRecipients: normalizeShareRecipients(parsed.shareRecipients),
+    }
   } catch {
     return defaultState
   }
@@ -202,12 +236,15 @@ function getGoogleSessionId() {
 
 export default function App() {
   const persisted = useMemo(() => loadPersistedState(), [])
-  const configImportInputRef = useRef(null)
   const [activeView, setActiveView] = useState(persisted.activeView)
   const [sources, setSources] = useState(persisted.sources)
   const [debug] = useState(persisted.debug)
   const [lastGeneratedCode, setLastGeneratedCode] = useState(persisted.lastGeneratedCode)
   const [selectedJobId, setSelectedJobId] = useState(persisted.lastSelectedJobId)
+  const [selectedFaqSpreadsheetId, setSelectedFaqSpreadsheetId] = useState(persisted.selectedFaqSpreadsheetId || '')
+  const [selectedFaqSpreadsheetTitle, setSelectedFaqSpreadsheetTitle] = useState(persisted.selectedFaqSpreadsheetTitle || FIXED_SPREADSHEET_TITLE)
+  const [selectedConfigFileId, setSelectedConfigFileId] = useState(persisted.selectedConfigFileId || '')
+  const [selectedConfigFileName, setSelectedConfigFileName] = useState(persisted.selectedConfigFileName || '')
 
   const [_JOBS, setJobs] = useState([])
   const [selectedJob, setSelectedJob] = useState(null)
@@ -215,6 +252,12 @@ export default function App() {
   const [_HEALTH, setHealth] = useState(null)
   const [googleSession, setGoogleSession] = useState(null)
   const [activityLogs, setActivityLogs] = useState([])
+  const [availableFaqSheets, setAvailableFaqSheets] = useState([])
+  const [availableConfigFiles, setAvailableConfigFiles] = useState([])
+  const [driveListBusy, setDriveListBusy] = useState(false)
+  const [shareBusy, setShareBusy] = useState(false)
+  const [saveConfigBusy, setSaveConfigBusy] = useState(false)
+  const [shareRecipients, setShareRecipients] = useState(normalizeShareRecipients(persisted.shareRecipients))
 
   const [processMessage, setProcessMessage] = useState('')
   const [processError, setProcessError] = useState('')
@@ -241,6 +284,14 @@ export default function App() {
     [sources],
   )
   const googleProfileLabel = googleSession?.profile_name || googleSession?.profile_email || 'Sessio de Google'
+  const selectedFaqSheet = useMemo(
+    () => availableFaqSheets.find((item) => item.id === selectedFaqSpreadsheetId) || null,
+    [availableFaqSheets, selectedFaqSpreadsheetId],
+  )
+  const currentConfigFile = useMemo(
+    () => availableConfigFiles.find((item) => item.id === selectedConfigFileId) || null,
+    [availableConfigFiles, selectedConfigFileId],
+  )
 
   async function apiFetch(url, options = {}) {
     const googleSessionId = getGoogleSessionId()
@@ -267,6 +318,11 @@ export default function App() {
         debug,
         lastGeneratedCode,
         lastSelectedJobId: selectedJobId,
+        selectedFaqSpreadsheetId,
+        selectedFaqSpreadsheetTitle,
+        selectedConfigFileId,
+        selectedConfigFileName,
+        shareRecipients,
       }),
     )
   }, [
@@ -275,6 +331,11 @@ export default function App() {
     debug,
     lastGeneratedCode,
     selectedJobId,
+    selectedFaqSpreadsheetId,
+    selectedFaqSpreadsheetTitle,
+    selectedConfigFileId,
+    selectedConfigFileName,
+    shareRecipients,
   ])
 
   useEffect(() => {
@@ -306,6 +367,136 @@ export default function App() {
     setGoogleSession(sessionData)
   }
 
+  async function loadFaqSheets() {
+    setDriveListBusy(true)
+    try {
+      const [faqResponse, configResponse] = await Promise.all([
+        apiFetch(`${API_BASE}/api/google/faqs/spreadsheets`),
+        apiFetch(`${API_BASE}/api/google/faqs/configurations`),
+      ])
+      const faqData = await faqResponse.json().catch(() => null)
+      const configData = await configResponse.json().catch(() => null)
+      if (!faqResponse.ok) throw new Error(faqData?.detail || `HTTP ${faqResponse.status}`)
+      if (!configResponse.ok) throw new Error(configData?.detail || `HTTP ${configResponse.status}`)
+
+      const faqItems = Array.isArray(faqData?.items) ? faqData.items : []
+      const configItems = Array.isArray(configData?.items) ? configData.items : []
+      setAvailableFaqSheets(faqItems)
+      setAvailableConfigFiles(configItems)
+
+      if (!faqItems.length) {
+        setSelectedFaqSpreadsheetId('')
+        setSelectedFaqSpreadsheetTitle(FIXED_SPREADSHEET_TITLE)
+      } else {
+        const currentSelection = faqItems.find((item) => item.id === selectedFaqSpreadsheetId)
+        const preferredSelection = currentSelection
+          || faqItems.find((item) => item.name === selectedFaqSpreadsheetTitle)
+          || faqItems.find((item) => item.name === FIXED_SPREADSHEET_TITLE)
+          || faqItems[0]
+
+        setSelectedFaqSpreadsheetId(preferredSelection.id)
+        setSelectedFaqSpreadsheetTitle(preferredSelection.name)
+      }
+
+      if (!configItems.length) {
+        setSelectedConfigFileId('')
+        setSelectedConfigFileName('')
+      } else {
+        const currentConfig = configItems.find((item) => item.id === selectedConfigFileId)
+        const preferredConfig = currentConfig
+          || configItems.find((item) => item.name === selectedConfigFileName)
+          || configItems[0]
+        setSelectedConfigFileId(preferredConfig.id)
+        setSelectedConfigFileName(preferredConfig.name)
+      }
+    } finally {
+      setDriveListBusy(false)
+    }
+  }
+
+  async function shareSelectedFaqFile() {
+    const emails = shareRecipients.map((recipient) => recipient.value.trim()).filter(Boolean)
+    if (!selectedFaqSpreadsheetId) {
+      setExportMessage('Selecciona primer un arxiu de FAQs per compartir.')
+      return
+    }
+    if (!emails.length) {
+      setExportMessage('Indica almenys un correu electrònic abans de compartir l’arxiu.')
+      return
+    }
+
+    setShareBusy(true)
+    setExportMessage('')
+    try {
+      for (const email of emails) {
+        const response = await apiFetch(`${API_BASE}/api/google/share-file`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            file_id: selectedFaqSpreadsheetId,
+            email,
+            role: 'writer',
+          }),
+        })
+        const data = await response.json().catch(() => null)
+        if (!response.ok) throw new Error(data?.detail || `HTTP ${response.status}`)
+      }
+      setExportMessage(`Arxiu ${selectedFaqSheet?.name || selectedFaqSpreadsheetTitle} compartit amb ${emails.join(', ')}.`)
+    } catch (error) {
+      setExportMessage(error instanceof Error ? error.message : 'No s’ha pogut compartir l’arxiu.')
+    } finally {
+      setShareBusy(false)
+    }
+  }
+
+  async function loadSelectedConfigFile(fileId, fileName) {
+    const cleanFileId = (fileId || '').trim()
+    if (!cleanFileId) {
+      setSelectedConfigFileId('')
+      setSelectedConfigFileName('')
+      return
+    }
+
+    try {
+      const params = new URLSearchParams({ file_id: cleanFileId })
+      const response = await apiFetch(`${API_BASE}/api/google/drive/file-content?${params.toString()}`)
+      const data = await response.json().catch(() => null)
+      if (!response.ok) throw new Error(data?.detail || `HTTP ${response.status}`)
+      const importedRows = parseConfigCsv(data?.content || '')
+      if (!importedRows.length) {
+        throw new Error('La configuracio seleccionada no conte cap topic ni URL.')
+      }
+
+      const groupedSources = new Map()
+      importedRows.forEach(({ topic, url, enabled }) => {
+        const key = topic || '__EMPTY_TOPIC__'
+        const currentGroup = groupedSources.get(key) || {
+          id: crypto.randomUUID(),
+          topic,
+          urls: [],
+        }
+        currentGroup.urls.push({
+          id: crypto.randomUUID(),
+          value: url,
+          enabled,
+        })
+        groupedSources.set(key, currentGroup)
+      })
+
+      const nextSources = Array.from(groupedSources.values()).map((group) => ({
+        ...group,
+        urls: group.urls.length > 0 ? group.urls : [{ id: crypto.randomUUID(), value: '', enabled: true }],
+      }))
+
+      setSources(nextSources.length > 0 ? nextSources : [createEmptySource()])
+      setSelectedConfigFileId(cleanFileId)
+      setSelectedConfigFileName(fileName || '')
+      setExportMessage(`Configuracio carregada des de ${fileName || 'Drive'}.`)
+    } catch (error) {
+      setExportMessage(error instanceof Error ? error.message : 'No s’ha pogut carregar la configuració seleccionada.')
+    }
+  }
+
   useEffect(() => {
     const run = async () => {
       try {
@@ -322,6 +513,15 @@ export default function App() {
     }
     run()
   }, [])
+
+  useEffect(() => {
+    if (!googleSession?.connected) {
+      setAvailableFaqSheets([])
+      setAvailableConfigFiles([])
+      return
+    }
+    loadFaqSheets().catch(() => {})
+  }, [googleSession?.connected])
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search)
@@ -468,7 +668,7 @@ export default function App() {
     )
   }
 
-  function exportConfigCsv() {
+  function buildConfigCsvText() {
     const rows = ['topic;url;enabled']
 
     sources.forEach((group) => {
@@ -483,63 +683,53 @@ export default function App() {
       })
     })
 
-    const blob = new Blob([`\uFEFF${rows.join('\r\n')}`], { type: 'text/csv;charset=utf-8;' })
-    const objectUrl = URL.createObjectURL(blob)
-    const link = document.createElement('a')
+    return `\uFEFF${rows.join('\r\n')}`
+  }
+
+  async function saveConfigToDrive() {
     const stamp = new Date().toISOString().slice(0, 10)
-    link.href = objectUrl
-    link.download = `faq-config-${stamp}.csv`
-    document.body.appendChild(link)
-    link.click()
-    document.body.removeChild(link)
-    URL.revokeObjectURL(objectUrl)
-    setExportMessage('Configuracio exportada en CSV.')
-  }
+    const suggestedName = (currentConfigFile?.name || selectedConfigFileName || `faq-config-${stamp}.csv`).trim()
+    const content = buildConfigCsvText()
 
-  function openConfigImporter() {
-    configImportInputRef.current?.click()
-  }
-
-  async function importConfigCsv(event) {
-    const file = event.target.files?.[0]
-    event.target.value = ''
-    if (!file) return
-
+    setSaveConfigBusy(true)
+    setExportMessage('')
     try {
-      const text = await file.text()
-      const importedRows = parseConfigCsv(text)
-      if (!importedRows.length) {
-        throw new Error('El CSV no conte cap topic ni URL per importar.')
-      }
-
-      const groupedSources = new Map()
-
-      importedRows.forEach(({ topic, url, enabled }) => {
-        const key = topic || '__EMPTY_TOPIC__'
-        const currentGroup = groupedSources.get(key) || {
-          id: crypto.randomUUID(),
-          topic,
-          urls: [],
-        }
-
-        currentGroup.urls.push({
-          id: crypto.randomUUID(),
-          value: url,
-          enabled,
-        })
-        groupedSources.set(key, currentGroup)
+      const response = await apiFetch(`${API_BASE}/api/google/faqs/configurations`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          name: suggestedName,
+          content,
+        }),
       })
-
-      const nextSources = Array.from(groupedSources.values()).map((group) => ({
-        ...group,
-        urls: group.urls.length > 0 ? group.urls : [{ id: crypto.randomUUID(), value: '', enabled: true }],
-      }))
-
-      setSources(nextSources.length > 0 ? nextSources : [createEmptySource()])
-      setExportMessage(`Configuracio importada: ${nextSources.length} topics carregats.`)
+      const data = await response.json().catch(() => null)
+      if (!response.ok) throw new Error(data?.detail || `HTTP ${response.status}`)
+      setSelectedConfigFileId(data.file_id || '')
+      setSelectedConfigFileName(data.name || suggestedName)
+      setExportMessage(`Configuracio desada a Drive com ${data.name || suggestedName}.`)
+      await loadFaqSheets()
     } catch (error) {
-      setExportMessage(error instanceof Error ? error.message : 'No s’ha pogut importar el CSV de configuracio.')
+      setExportMessage(error instanceof Error ? error.message : 'No s’ha pogut desar la configuració a Drive.')
+    } finally {
+      setSaveConfigBusy(false)
     }
+  }
+
+  function addShareRecipient() {
+    setShareRecipients((current) => [...current, createShareRecipient('')])
+  }
+
+  function updateShareRecipient(id, value) {
+    setShareRecipients((current) => current.map((recipient) => (
+      recipient.id === id ? { ...recipient, value } : recipient
+    )))
+  }
+
+  function removeShareRecipient(id) {
+    setShareRecipients((current) => {
+      if (current.length === 1) return [createShareRecipient('')]
+      return current.filter((recipient) => recipient.id !== id)
+    })
   }
 
   async function startScrape() {
@@ -588,7 +778,7 @@ export default function App() {
       const response = await apiFetch(`${API_BASE}/api/google/connect`, { method: 'POST', body: formData })
       const data = await response.json().catch(() => null)
       if (!response.ok) throw new Error(data?.detail || `HTTP ${response.status}`)
-      if (!data?.authorization_url) throw new Error('No s’ha rebut la URL d’autenticacio de Google.')
+      if (!data?.authorization_url) throw new Error('No s’ha rebut la URL d’autenticació de Google.')
 
       const popup = window.open(data.authorization_url, '_blank', 'popup=yes,width=560,height=720')
       if (!popup) throw new Error('El navegador ha bloquejat la finestra de login de Google.')
@@ -617,15 +807,19 @@ export default function App() {
     if (!selectedJobId) return
     setExportMessage('')
 
+    const spreadsheetTitle = selectedFaqSpreadsheetTitle.trim() || FIXED_SPREADSHEET_TITLE
+    const worksheetName = FIXED_WORKSHEET_NAME
+
     setDownloadBusy(true)
-    appendActivityLog(`Exportant FAQs a Google Sheets: ${FIXED_DRIVE_PATH} / ${FIXED_SPREADSHEET_TITLE} / ${FIXED_WORKSHEET_NAME}`)
+    appendActivityLog(`Exportant FAQs a Google Sheets: ${FIXED_DRIVE_PATH} / ${spreadsheetTitle} / ${worksheetName}`)
     try {
       const response = await apiFetch(`${API_BASE}/api/jobs/${selectedJobId}/export/sheets`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          spreadsheet_title: FIXED_SPREADSHEET_TITLE,
-          worksheet_name: FIXED_WORKSHEET_NAME,
+          spreadsheet_title: spreadsheetTitle,
+          spreadsheet_id: selectedFaqSpreadsheetId || undefined,
+          worksheet_name: worksheetName,
         }),
       })
       const data = await response.json().catch(() => null)
@@ -633,7 +827,9 @@ export default function App() {
       setExportMessage(`Resultat exportat a Google Sheets a ${FIXED_DRIVE_PATH}/${data.spreadsheet_title}. Fes la revisió i marca Estat=Aprovat al full.`)
       appendActivityLog(`Exportacio completada: ${FIXED_DRIVE_PATH} / ${data.spreadsheet_title} / ${data.worksheet_name}`)
       setLastAutoExportedJobId(selectedJobId)
+      setSelectedFaqSpreadsheetTitle(data.spreadsheet_title || spreadsheetTitle)
       await loadGoogleStatus()
+      await loadFaqSheets()
     } catch (error) {
       setExportMessage(error instanceof Error ? error.message : 'No s’ha pogut exportar a Google Sheets.')
       appendActivityLog(`Error d'exportacio a Google Sheets: ${error instanceof Error ? error.message : 'desconegut'}`)
@@ -649,11 +845,11 @@ export default function App() {
     formData.append('input_mode', 'sheets_oauth')
 
     if (!googleSession?.connected) {
-      setExportMessage('Inicia sessio amb Google per generar l’HTML des del Sheet seleccionat.')
+      setExportMessage('Inicia sessió amb Google per generar l’HTML des del Sheet seleccionat.')
       return
     }
 
-    formData.append('spreadsheet_title', FIXED_SPREADSHEET_TITLE)
+    formData.append('spreadsheet_title', selectedFaqSpreadsheetTitle.trim() || FIXED_SPREADSHEET_TITLE)
     formData.append('worksheet_name', FIXED_WORKSHEET_NAME)
 
     setGeneratorCompleted(false)
@@ -670,13 +866,13 @@ export default function App() {
       setGeneratorProgress(100)
       setGeneratorCompleted(true)
       setGeneratorMissingSheet(false)
-      setExportMessage('Codi HTML carregat des del document FAQs.')
+      setExportMessage('Codi HTML carregat des del document FAQ seleccionat.')
     } catch (error) {
-      const message = error instanceof Error ? error.message : 'No s’ha pogut generar el HTML.'
+      const message = error instanceof Error ? error.message : 'No s’ha pogut generar l’HTML.'
       setLastGeneratedCode('')
       setGeneratorCompleted(false)
       setGeneratorProgress(0)
-      setGeneratorMissingSheet(message.includes("No s'ha trobat cap document 'FAQs'"))
+      setGeneratorMissingSheet(message.includes("No s'ha trobat cap document"))
       setExportMessage(message)
     } finally {
       window.setTimeout(() => {
@@ -749,63 +945,163 @@ export default function App() {
 
   const googleSessionPanel = (
     <aside className="panel side-panel google-session-panel">
-      {googleSession?.connected && googleSession?.profile_picture ? (
-        <img
-          className="panel-icon google-avatar"
-          src={googleSession.profile_picture}
-          alt={googleProfileLabel}
-          referrerPolicy="no-referrer"
-        />
-      ) : null}
-      {googleSession?.connected && (
-        <div className="google-profile-card">
-          <strong>{googleProfileLabel}</strong>
-          {googleSession?.profile_email && <span>{googleSession.profile_email}</span>}
-        </div>
-      )}
-      {googleSession?.connected ? (
-        <div className="google-status-actions">
-          <p className="google-status-row connected">
-            <span className="status done">Connectat</span>
-          </p>
-          <button
-            type="button"
-            className="google-session-button compact"
-            onClick={logoutGoogle}
-            disabled={googleBusy}
-          >
-            {googleBusy ? 'Tancant sessio...' : 'Tancar sessio'}
-          </button>
-        </div>
-      ) : (
-        <>
-          <p className="google-status-row disconnected">
+      <div className="account-card">
+        <div className="compact-card-head">
+          <div className="title-row-inline compact-inline-head">
             <img className="panel-icon google-badge inline" src={googleLogo} alt="" aria-hidden="true" />
-            <span className="status queued">No connectat</span>
-          </p>
-          <div className="action-stack">
+            <strong>Compte Google</strong>
+          </div>
+        </div>
+        {googleSession?.connected && googleSession?.profile_picture ? (
+          <img
+            className="panel-icon google-avatar"
+            src={googleSession.profile_picture}
+            alt={googleProfileLabel}
+            referrerPolicy="no-referrer"
+          />
+        ) : null}
+        {googleSession?.connected && (
+          <div className="google-profile-card">
+            <strong>{googleProfileLabel}</strong>
+            {googleSession?.profile_email && <span>{googleSession.profile_email}</span>}
+          </div>
+        )}
+        {googleSession?.connected ? (
+          <div className="google-status-actions">
+            <p className="google-status-row connected">
+              <span className="status done">Connectat</span>
+            </p>
             <button
               type="button"
-              className="google-session-button"
-              onClick={connectGoogle}
+              className="google-session-button compact"
+              onClick={logoutGoogle}
               disabled={googleBusy}
             >
-              {googleBusy ? 'Connectant...' : 'Iniciar sessio amb Google'}
+              {googleBusy ? 'Tancant sessio...' : 'Tancar sessio'}
             </button>
           </div>
-        </>
-      )}
+        ) : (
+          <>
+            <p className="google-status-row disconnected">
+              <img className="panel-icon google-badge inline" src={googleLogo} alt="" aria-hidden="true" />
+              <span className="status queued">No connectat</span>
+            </p>
+            <div className="action-stack">
+              <button
+                type="button"
+                className="google-session-button"
+                onClick={connectGoogle}
+                disabled={googleBusy}
+              >
+                {googleBusy ? 'Connectant...' : 'Iniciar sessio amb Google'}
+              </button>
+            </div>
+          </>
+        )}
+      </div>
       {googleSession?.connected && (
         <div className="drive-browser-card">
-          <div className="selected-sheet-card">
-            <div className="sheet-warning-head">
-              <span className="sheet-warning-icon" aria-hidden="true">!</span>
-              <span className="drive-item-kind">
-                Atencio! {activeView === 'scrape' ? 'Es guardara en aquesta ruta per defecte' : 'Es buscara en aquesta ruta per importar les FAQs'}
-              </span>
+          <div className="selected-sheet-card compact-side-card">
+            <div className="compact-card-head">
+              <div className="title-row-inline compact-inline-head">
+                <img className="panel-icon google-badge inline" src={googleDriveLogo} alt="" aria-hidden="true" />
+                <strong>Google Drive</strong>
+              </div>
+              <span className="drive-item-kind">Arxius</span>
             </div>
-            <strong>{FIXED_DRIVE_PATH} / {FIXED_SPREADSHEET_TITLE}</strong>
-            <p className="selected-sheet-helper">Pestanya: {FIXED_WORKSHEET_NAME}</p>
+            <label className="field drive-select-field">
+              <span className="field-with-help">
+                <span>Arxiu FAQ</span>
+                <details className="inline-help">
+                  <summary>?</summary>
+                  <div className="inline-help-popover">Ruta FAQs per defecte: {FIXED_DRIVE_PATH}</div>
+                </details>
+              </span>
+              <select
+                value={selectedFaqSpreadsheetId}
+                onChange={(event) => {
+                  const nextId = event.target.value
+                  const nextSheet = availableFaqSheets.find((item) => item.id === nextId)
+                  setSelectedFaqSpreadsheetId(nextId)
+                  setSelectedFaqSpreadsheetTitle(nextSheet?.name || FIXED_SPREADSHEET_TITLE)
+                }}
+                disabled={driveListBusy || !availableFaqSheets.length}
+              >
+                {!availableFaqSheets.length ? (
+                  <option value="">No hi ha fitxers disponibles</option>
+                ) : (
+                  availableFaqSheets.map((item) => (
+                    <option key={item.id} value={item.id}>{item.name}</option>
+                  ))
+                )}
+              </select>
+            </label>
+            <label className="field drive-select-field">
+              <span className="field-with-help">
+                <span>Configuracio CSV</span>
+                <details className="inline-help">
+                  <summary>?</summary>
+                  <div className="inline-help-popover">Ruta configuracions per defecte: UPC / FAQs / Configuracions</div>
+                </details>
+              </span>
+              <select
+                value={selectedConfigFileId}
+                onChange={(event) => {
+                  const nextId = event.target.value
+                  const nextConfig = availableConfigFiles.find((item) => item.id === nextId)
+                  if (!nextId || !nextConfig) {
+                    setSelectedConfigFileId('')
+                    setSelectedConfigFileName('')
+                    return
+                  }
+                  loadSelectedConfigFile(nextId, nextConfig.name).catch(() => {})
+                }}
+                disabled={driveListBusy || !availableConfigFiles.length}
+              >
+                {!availableConfigFiles.length ? (
+                  <option value="">No hi ha configuracions disponibles</option>
+                ) : (
+                  availableConfigFiles.map((item) => (
+                    <option key={item.id} value={item.id}>{item.name}</option>
+                  ))
+                )}
+              </select>
+            </label>
+          </div>
+
+          <div className="selected-sheet-card compact-side-card share-side-card">
+            <div className="compact-card-head">
+              <div className="share-head">
+                <div className="title-row-inline compact-inline-head">
+                  <img className="panel-icon google-badge inline" src={googleGroupsIcon} alt="" aria-hidden="true" />
+                  <span className="field-label-strong">Compartir amb</span>
+                </div>
+                <button type="button" className="share-add-button" onClick={addShareRecipient}>+</button>
+              </div>
+              <span className="drive-item-kind">{selectedFaqSheet?.name || selectedFaqSpreadsheetTitle || FIXED_SPREADSHEET_TITLE}</span>
+            </div>
+            <div className="sheet-share-block">
+              <div className="share-recipient-list">
+                {shareRecipients.map((recipient, index) => (
+                  <div key={recipient.id} className="share-recipient-row">
+                    <input
+                      type="email"
+                      value={recipient.value}
+                      onChange={(event) => updateShareRecipient(recipient.id, event.target.value)}
+                      placeholder={index === 0 ? 'nom.cognom@upc.edu' : 'altra.persona@upc.edu'}
+                    />
+                    {shareRecipients.length > 1 && (
+                      <button type="button" className="ghost compact-ghost" onClick={() => removeShareRecipient(recipient.id)}>
+                        -
+                      </button>
+                    )}
+                  </div>
+                ))}
+              </div>
+              <button type="button" className="secondary" onClick={shareSelectedFaqFile} disabled={shareBusy || !selectedFaqSpreadsheetId}>
+                {shareBusy ? 'Compartint...' : 'Compartir arxiu'}
+              </button>
+            </div>
           </div>
         </div>
       )}
@@ -820,7 +1116,7 @@ export default function App() {
             <h1>Eina de gestió de preguntes freqüents de la UPC</h1>
             <p className="hero-text">
               Captura contingut des de webs UPC, revisa’l amb un flux clar i genera el codi HTML final amb una
-              aparenca coherent amb l’ecosistema institucional.
+              aparença coherent amb l’ecosistema institucional.
             </p>
             <div className="hero-actions">
               <button
@@ -829,7 +1125,7 @@ export default function App() {
                 onClick={() => setActiveView('scrape')}
               >
                 <span className="hero-cta-kicker">Captura</span>
-                <strong>Descarregador de Preguntes Frequents</strong>
+                <strong>Descarregador de Preguntes Freqüents</strong>
                 <span className="hero-cta-copy">Prepara topics, URLs i envia el resultat directament a Google Sheets.</span>
               </button>
               <button
@@ -837,7 +1133,7 @@ export default function App() {
                 className={`hero-cta ${activeView === 'export' ? 'active' : ''}`}
                 onClick={() => setActiveView('export')}
               >
-                <span className="hero-cta-kicker">Publicacio</span>
+                <span className="hero-cta-kicker">Publicació</span>
                 <strong>Generador de codi font</strong>
                 <span className="hero-cta-copy">Converteix les files aprovades en HTML net i llest per Genweb.</span>
               </button>
@@ -847,7 +1143,7 @@ export default function App() {
           <aside className="hero-aside">
             <img className="hero-roundel" src={upcRoundLogo} alt="UPC" />
             <div className="hero-note">Gestio de FAQs</div>
-            <div className="hero-note alt">Captura i publicacio</div>
+            <div className="hero-note alt">Captura i publicació</div>
           </aside>
         </section>
 
@@ -898,16 +1194,10 @@ export default function App() {
                     <h2>Fonts i descàrrega</h2>
                   </div>
                   <div className="config-tools">
-                    <button type="button" className="secondary" onClick={exportConfigCsv}>Exportar configuracio CSV</button>
-                    <button type="button" className="secondary" onClick={openConfigImporter}>Importar configuracio CSV</button>
+                    <button type="button" className="secondary" onClick={saveConfigToDrive} disabled={saveConfigBusy || !googleSession?.connected}>
+                      {saveConfigBusy ? 'Guardant...' : 'Guardar config'}
+                    </button>
                     <button type="button" className="secondary" onClick={addTopic}>Afegir topic</button>
-                    <input
-                      ref={configImportInputRef}
-                      className="sr-only-input"
-                      type="file"
-                      accept=".csv,text/csv"
-                      onChange={importConfigCsv}
-                    />
                   </div>
                 </div>
 
@@ -978,7 +1268,7 @@ export default function App() {
                   </div>
                   <p className="muted">
                     {validSources.length} URLs valides
-                    {invalidSources.length > 0 ? ` · ${invalidSources.length} no valides` : ''}
+                    {invalidSources.length > 0 ? ` · ${invalidSources.length} no vàlides` : ''}
                     {enabledSourceCount > 0 ? ` · ${enabledSourceCount} actives` : ''}
                     {disabledSourceCount > 0 ? ` · ${disabledSourceCount} desactivades` : ''}
                   </p>
@@ -1007,11 +1297,6 @@ export default function App() {
           <section className="content-grid export-layout">
             <div className="sidebar-stack">
               {googleSessionPanel}
-              <aside className="panel side-panel">
-                <h3>Recordatori</h3>
-                <p className="muted">Nomes s’utilitzen les files amb estat `Aprovat`.</p>
-                <p className="muted">Si falta `Subtopic`, el sistema hi posara `-` per defecte.</p>
-              </aside>
             </div>
 
             <div className="main-stack">
@@ -1026,7 +1311,7 @@ export default function App() {
                 </div>
 
                 <p className="muted">
-                  El sistema buscara les FAQs revisades a `El meu Drive / UPC / FAQs / FAQs`, dins de la pestanya `FAQs`.
+                  El sistema treballara amb l'arxiu seleccionat de `El meu Drive / UPC / FAQs` i amb la pestanya triada.
                 </p>
 
                 <div className="action-stack">
@@ -1069,10 +1354,10 @@ export default function App() {
                       <button type="button" className="copy-inline-button" onClick={copyGeneratedCode}>
                         Copia
                       </button>
-                      {copyFeedbackVisible && <span className="copy-success-indicator">✓</span>}
+                      {copyFeedbackVisible && <span className="copy-success-indicator">?</span>}
                     </>
                   )}
-                  <p className="muted">Enganxa aquest codi en un bloc HTML de Genweb. El resultat ja ve agrupat i amb el comportament d’acordio.</p>
+                  <p className="muted">Enganxa aquest codi en un bloc HTML de Genweb. El resultat ja ve agrupat i amb el comportament d’acordió.</p>
                 </div>
               </article>
             </div>
@@ -1093,3 +1378,4 @@ export default function App() {
     </div>
   )
 }
+

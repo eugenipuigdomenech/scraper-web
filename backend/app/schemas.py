@@ -143,7 +143,7 @@ class GoogleDriveItemResponse(BaseModel):
     id: str
     name: str
     mime_type: str
-    kind: Literal["folder", "spreadsheet"]
+    kind: Literal["folder", "spreadsheet", "file"]
 
 
 class GoogleDriveListResponse(BaseModel):
@@ -154,3 +154,38 @@ class GoogleDriveListResponse(BaseModel):
 class GoogleWorksheetListResponse(BaseModel):
     spreadsheet_id: str
     worksheets: list[str]
+
+
+class GoogleFixedFaqsListResponse(BaseModel):
+    folder_path: str
+    items: list[GoogleDriveItemResponse]
+
+
+class GoogleDriveFileContentResponse(BaseModel):
+    file_id: str
+    name: str
+    content: str
+
+
+class SaveConfigRequest(BaseModel):
+    name: str = Field(min_length=1)
+    content: str = Field(min_length=1)
+
+
+class SaveConfigResponse(BaseModel):
+    file_id: str
+    name: str
+    status: Literal["saved"]
+
+
+class ShareDriveFileRequest(BaseModel):
+    file_id: str = Field(min_length=1)
+    email: str = Field(min_length=3)
+    role: Literal["reader", "writer", "commenter"] = "writer"
+
+
+class ShareDriveFileResponse(BaseModel):
+    file_id: str
+    email: str
+    role: Literal["reader", "writer", "commenter"]
+    status: Literal["shared"]
