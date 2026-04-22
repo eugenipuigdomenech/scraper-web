@@ -168,7 +168,7 @@ def render_upc_faqaccordion(items: list[dict[str, str]]) -> str:
             )
             out.append(
                 f'<div id="{topic_id}" class="collapse" data-bs-parent="#faqTopicAccordion" '
-                'style="border-bottom: 1px solid #D1D1D1; margin-bottom: -1px; position: relative; z-index: 1; height: 0px; overflow: hidden; transition: height 350ms ease;">'
+                'style="margin-bottom: -1px; position: relative; z-index: 1; height: 0px; overflow: hidden; transition: height 350ms ease;">'
             )
             out.append('<div style="border-top: 0; padding: 0 0 12px; background: transparent;">')
             out.append(f'<div id="{inner_acc_id}" class="accordion" data-upc-faq-accordion="1">')
