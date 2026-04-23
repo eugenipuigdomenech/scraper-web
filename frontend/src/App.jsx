@@ -279,14 +279,6 @@ export default function App() {
   const [lastAutoExportedJobId, setLastAutoExportedJobId] = useState('')
 
   const { valid: validSources, invalid: invalidSources } = useMemo(() => extractUniqueSources(sources), [sources])
-  const enabledSourceCount = useMemo(
-    () => sources.reduce((sum, group) => sum + group.urls.filter((url) => url.enabled !== false && url.value.trim()).length, 0),
-    [sources],
-  )
-  const disabledSourceCount = useMemo(
-    () => sources.reduce((sum, group) => sum + group.urls.filter((url) => url.enabled === false).length, 0),
-    [sources],
-  )
   const googleProfileLabel = googleSession?.profile_name || googleSession?.profile_email || 'Sessio de Google'
   const selectedFaqSheet = useMemo(
     () => availableFaqSheets.find((item) => item.id === selectedFaqSpreadsheetId) || null,
@@ -1267,12 +1259,6 @@ export default function App() {
                         <img className="section-illustration" src={downloadLogo} alt="" aria-hidden="true" />
                         <h2>Fonts i descàrrega</h2>
                       </div>
-                      <div className="config-tools">
-                        <button type="button" className="secondary" onClick={saveConfigToDrive} disabled={saveConfigBusy || !googleSession?.connected}>
-                          {saveConfigBusy ? 'Guardant...' : 'Guardar config'}
-                        </button>
-                        <button type="button" className="secondary" onClick={addTopic}>Afegir topic</button>
-                      </div>
                     </div>
 
                     <div className="topic-stack">
@@ -1288,10 +1274,15 @@ export default function App() {
                                 placeholder={`Topic ${index + 1}`}
                               />
                             </label>
-                            <button type="button" className="ghost" onClick={() => removeTopic(group.id)}>Eliminar topic</button>
+                            <div className="inline-action-group">
+                              <button type="button" className="secondary inline-soft-action plus-action" onClick={addTopic} aria-label="Afegir topic" title="Afegir topic">+</button>
+                              {sources.length > 1 && (
+                                <button type="button" className="ghost inline-soft-action plus-action" onClick={() => removeTopic(group.id)} aria-label="Eliminar topic" title="Eliminar topic">-</button>
+                              )}
+                            </div>
                           </div>
 
-                          {group.urls.map((url) => (
+                          {group.urls.map((url, urlIndex) => (
                             <div key={url.id} className="url-row">
                               <label className="url-toggle">
                                 <input
@@ -1307,11 +1298,16 @@ export default function App() {
                                 onChange={(event) => updateTopic(group.id, url.id, { value: event.target.value })}
                                 placeholder="https://web.upc.edu/pagina-faq"
                               />
-                              <button type="button" className="ghost" onClick={() => removeUrl(group.id, url.id)}>Eliminar URL</button>
+                              <div className="inline-action-group">
+                                {urlIndex === group.urls.length - 1 && (
+                                  <button type="button" className="secondary inline-soft-action plus-action" onClick={() => addUrl(group.id)} aria-label="Afegir URL" title="Afegir URL">+</button>
+                                )}
+                                {group.urls.length > 1 && (
+                                  <button type="button" className="ghost inline-soft-action plus-action" onClick={() => removeUrl(group.id, url.id)} aria-label="Eliminar URL" title="Eliminar URL">-</button>
+                                )}
+                              </div>
                             </div>
                           ))}
-
-                          <button type="button" className="secondary" onClick={() => addUrl(group.id)}>Afegir URL</button>
                         </section>
                       ))}
                     </div>
@@ -1340,12 +1336,11 @@ export default function App() {
                           <p className="scrape-login-warning">No has iniciat sessio de Google. Connecta&apos;t per descarregar FAQs.</p>
                         )}
                       </div>
-                      <p className="muted">
-                        {validSources.length} URLs valides
-                        {invalidSources.length > 0 ? ` · ${invalidSources.length} no vàlides` : ''}
-                        {enabledSourceCount > 0 ? ` · ${enabledSourceCount} actives` : ''}
-                        {disabledSourceCount > 0 ? ` · ${disabledSourceCount} desactivades` : ''}
-                      </p>
+                      <div className="config-tools">
+                        <button type="button" className="secondary" onClick={saveConfigToDrive} disabled={saveConfigBusy || !googleSession?.connected}>
+                          {saveConfigBusy ? 'Guardant...' : 'Guardar config'}
+                        </button>
+                      </div>
                     </div>
                   </div>
                 </article>
@@ -1413,9 +1408,9 @@ export default function App() {
                   </div>
 
                   <p className="muted">
-                    Es generarà el codi font de les FAQs amb estat Aprovat.
+                    Arxiu seleccionat: <strong>{selectedFaqSheet?.name || selectedFaqSpreadsheetTitle || FIXED_SPREADSHEET_TITLE}</strong>. Es generarà el codi font de les FAQs amb estat Aprovat.
                     {' '}
-                    Arxiu seleccionat: <strong>{selectedFaqSheet?.name || selectedFaqSpreadsheetTitle || FIXED_SPREADSHEET_TITLE}</strong>.
+                  
                   </p>
 
                   <div className="action-stack">
@@ -1457,7 +1452,7 @@ export default function App() {
                         <button type="button" className="copy-inline-button" onClick={copyGeneratedCode}>
                           Copia
                         </button>
-                        {copyFeedbackVisible && <span className="copy-success-indicator">?</span>}
+                        {copyFeedbackVisible && <span className="copy-success-indicator" aria-label="Copiat" />}
                       </>
                     )}
                     <p className="muted">Enganxa aquest codi en un bloc HTML de Genweb. El resultat ja ve agrupat i amb el comportament d’acordió.</p>
