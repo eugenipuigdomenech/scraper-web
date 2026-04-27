@@ -583,12 +583,16 @@ pre {
 }
 
 .google-session-panel {
+  position: sticky;
+  top: 1rem;
+  align-self: start;
+  height: fit-content;
   gap: 1rem;
   justify-items: center;
   text-align: center;
-  background: linear-gradient(180deg, #ffffff 0%, #f8fbff 100%);
-  border-color: #d2e3fc;
-  box-shadow: 0 16px 34px rgba(66, 133, 244, 0.08);
+  background: rgba(255, 255, 255, 0.94);
+  border-color: #d6dee5;
+  box-shadow: 0 10px 18px rgba(0, 59, 92, 0.05);
 }
 
 .account-card {
@@ -597,6 +601,39 @@ pre {
   gap: 0.85rem;
   justify-items: center;
   text-align: center;
+  background: rgba(255, 255, 255, 0.92);
+  border: 1px solid #d6dee5;
+  border-left: 4px solid #7fb2dc;
+  box-shadow: 0 10px 18px rgba(0, 59, 92, 0.05);
+}
+
+.session-feedback-card {
+  width: 100%;
+  min-height: 0;
+  display: grid;
+  gap: 0.4rem;
+  padding: 0.75rem 0.8rem;
+  background: rgba(255, 255, 255, 0.92);
+  border: 1px solid #d6dee5;
+  border-left: 4px solid #7fb2dc;
+  box-shadow: 0 8px 16px rgba(0, 59, 92, 0.05);
+}
+
+.session-feedback-text {
+  margin: 0;
+  width: 100%;
+  text-align: left;
+  color: var(--upc-blue-dark);
+  line-height: 1.4;
+}
+
+.session-feedback-subtext {
+  margin: 0.25rem 0 0;
+  width: 100%;
+  text-align: left;
+  color: var(--upc-muted);
+  font-size: 0.88rem;
+  line-height: 1.35;
 }
 
 .google-session-panel > p {
@@ -1015,6 +1052,155 @@ pre {
   gap: 1rem;
 }
 
+.hidden-file-input {
+  display: none;
+}
+
+.workflow-card-grid {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 1rem;
+}
+
+.workflow-card {
+  display: grid;
+  gap: 0.9rem;
+  align-content: start;
+  padding: 1rem 1.1rem;
+  background: #e6f0f8;
+  border: 1px solid #bfd4e4;
+  border-left: 4px solid #6f9fbe;
+  box-shadow: 0 10px 18px rgba(0, 59, 92, 0.05);
+}
+
+.workflow-card-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.6rem;
+}
+
+.workflow-card-head h3 {
+  margin: 0;
+}
+
+.workflow-card-toggle {
+  cursor: pointer;
+}
+
+.workflow-head-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+}
+
+.sheet-choice-stack {
+  display: grid;
+  gap: 0.75rem;
+  width: 100%;
+  max-width: 520px;
+  margin-inline: auto;
+}
+
+.workflow-summary-strip {
+  display: flex;
+  align-items: center;
+  gap: 0.7rem;
+  flex-wrap: wrap;
+  padding: 0.8rem 0.9rem;
+  background: #f6f9fc;
+  border: 1px solid #d9e4ee;
+  color: var(--upc-blue-deep);
+  font-size: 0.86rem;
+}
+
+.workflow-card .field:not(.grow),
+.workflow-card .drive-select-field,
+.workflow-card .sheet-share-block {
+  width: 100%;
+  max-width: 520px;
+  margin-inline: auto;
+}
+
+.workflow-card .field:not(.grow) input,
+.workflow-card .drive-select-field select {
+  max-width: 520px;
+  margin-inline: auto;
+}
+
+.sheet-choice-stack > .check-row,
+.share-action-row > .secondary {
+  width: auto;
+}
+
+.sheet-choice-stack > .check-row {
+  justify-self: start;
+}
+
+.share-action-row > .secondary {
+  min-width: 200px;
+  max-width: 520px;
+}
+
+.share-action-row {
+  justify-content: center;
+  flex-wrap: wrap;
+}
+
+.share-recipient-list {
+  max-width: 520px;
+  margin-inline: auto;
+  width: 100%;
+}
+
+.config-picker-row {
+  display: grid;
+  grid-template-columns: auto minmax(360px, 1fr) auto;
+  gap: 0.6rem;
+  align-items: center;
+  justify-content: start;
+}
+
+.config-picker-label {
+  white-space: nowrap;
+}
+
+.config-picker-row .compact-inline-button {
+  min-width: 110px;
+  padding-inline: 0.95rem;
+}
+
+.workflow-card .field.config-drive-field {
+  width: 100%;
+  max-width: none;
+  margin-inline: 0;
+}
+
+.workflow-card .field.config-drive-field .config-picker-row {
+  margin-inline: 0;
+  justify-content: start;
+}
+
+.workflow-card.is-disabled {
+  opacity: 0.42;
+  filter: grayscale(100%);
+}
+
+.workflow-card.is-disabled * {
+  pointer-events: none;
+}
+
+.scrape-locked-section {
+  display: grid;
+  gap: 1rem;
+  transition: opacity 180ms ease, filter 180ms ease;
+}
+
+.scrape-locked-section.is-locked {
+  opacity: 0.42;
+  filter: grayscale(100%);
+}
+
 .share-add-button {
   width: 1.9rem;
   min-width: 1.9rem;
@@ -1050,26 +1236,23 @@ pre {
 
 .inline-help {
   position: relative;
+  display: inline-flex;
+  align-items: center;
 }
 
-.inline-help summary {
+.inline-help-trigger {
   display: inline-flex;
   align-items: center;
   justify-content: center;
   width: 1.15rem;
   height: 1.15rem;
   border-radius: 999px;
-  cursor: pointer;
-  list-style: none;
+  cursor: default;
   background: #edf6fc;
   border: 1px solid #b8d4e7;
   color: var(--upc-blue-dark);
   font-size: 0.76rem;
   font-weight: 700;
-}
-
-.inline-help summary::-webkit-details-marker {
-  display: none;
 }
 
 .inline-help-popover {
@@ -1088,6 +1271,16 @@ pre {
   color: var(--upc-muted);
   font-size: 0.78rem;
   line-height: 1.35;
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+  transition: opacity 140ms ease, visibility 140ms ease;
+}
+
+.inline-help:hover .inline-help-popover,
+.inline-help:focus-within .inline-help-popover {
+  opacity: 1;
+  visibility: visible;
 }
 
 @media (max-width: 760px) {
@@ -1528,6 +1721,11 @@ button.plus-action {
   .hero-banner {
     grid-template-columns: 1fr;
   }
+
+  .google-session-panel {
+    position: static;
+    top: auto;
+  }
 }
 
 @media (max-width: 760px) {
@@ -1569,7 +1767,8 @@ button.plus-action {
 
   .stats-grid,
   .summary-grid,
-  .config-grid {
+  .config-grid,
+  .workflow-card-grid {
     grid-template-columns: 1fr;
   }
 }
