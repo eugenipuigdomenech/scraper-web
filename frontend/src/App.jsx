@@ -5,7 +5,6 @@ import upcRoundLogo from './assets/upc_logo_2.png'
 import upcFooterLogo from './assets/upc_logo.png'
 import homeLogo from './assets/home_logo.png'
 import faqsLogo from './assets/faqs1_logo.png'
-import htmlLogo from './assets/html-source-code.png'
 import googleLogo from './assets/Google_logo.png'
 
 const defaultApiBase = `${window.location.protocol}//${window.location.hostname}:8000`
@@ -270,6 +269,10 @@ export default function App() {
   const [generatorProgress, setGeneratorProgress] = useState(0)
   const [generatorCompleted, setGeneratorCompleted] = useState(false)
   const [generatorMissingSheet, setGeneratorMissingSheet] = useState(false)
+  const [generatorNoApprovedFaqs, setGeneratorNoApprovedFaqs] = useState(false)
+  const [generatorApprovedRows, setGeneratorApprovedRows] = useState(0)
+  const [generatorSubtopics, setGeneratorSubtopics] = useState(0)
+  const [exportStep, setExportStep] = useState(1)
   const [scrapeVisualProgress, setScrapeVisualProgress] = useState(0)
   const [copyFeedbackVisible, setCopyFeedbackVisible] = useState(false)
   const [logsCollapsed, setLogsCollapsed] = useState(false)
@@ -300,9 +303,10 @@ export default function App() {
   const step4Enabled = hasUnlockedStepFlow || scrapeStep >= 3
   const canGoNextStep = scrapeStep === 1
     ? step2Enabled
-    : (scrapeStep === 2
-      ? step3Enabled
-      : scrapeStep === 3)
+      : (scrapeStep === 2
+        ? step3Enabled
+        : scrapeStep === 3)
+  const canGoNextExportStep = Boolean(selectedFaqSpreadsheetId)
   const workflowSteps = [
     { id: 1, title: 'Pas 1: Configuració', enabled: true },
     { id: 2, title: 'Pas 2: Fitxer Sheets', enabled: step2Enabled },
@@ -1025,6 +1029,7 @@ export default function App() {
   async function generateHtmlFromExternalSource() {
     setExportMessage('')
     setGeneratorMissingSheet(false)
+    setGeneratorNoApprovedFaqs(false)
     const formData = new FormData()
     formData.append('input_mode', 'sheets_oauth')
 
@@ -1041,6 +1046,9 @@ export default function App() {
     formData.append('worksheet_name', FIXED_WORKSHEET_NAME)
 
     setGeneratorCompleted(false)
+    setGeneratorNoApprovedFaqs(false)
+    setGeneratorApprovedRows(0)
+    setGeneratorSubtopics(0)
     setGeneratorProgress(0)
     setGeneratorBusy(true)
     try {
@@ -1051,16 +1059,22 @@ export default function App() {
       const data = await response.json().catch(() => null)
       if (!response.ok) throw new Error(data?.detail || `HTTP ${response.status}`)
       setLastGeneratedCode(data.html_text || '')
+      setGeneratorApprovedRows(Number(data?.approved_rows || 0))
+      setGeneratorSubtopics(Number(data?.groups || 0))
       setGeneratorProgress(100)
       setGeneratorCompleted(true)
       setGeneratorMissingSheet(false)
+      setGeneratorNoApprovedFaqs(false)
       setExportMessage('Codi HTML carregat des del document FAQ seleccionat.')
     } catch (error) {
       const message = error instanceof Error ? error.message : 'No s’ha pogut generar l’HTML.'
       setLastGeneratedCode('')
       setGeneratorCompleted(false)
+      setGeneratorApprovedRows(0)
+      setGeneratorSubtopics(0)
       setGeneratorProgress(0)
       setGeneratorMissingSheet(message.includes("No s'ha trobat cap document"))
+      setGeneratorNoApprovedFaqs(message.toLowerCase().includes('cap faq aprovada'))
       setExportMessage(message)
     } finally {
       window.setTimeout(() => {
@@ -1129,6 +1143,13 @@ export default function App() {
 
     return () => window.clearInterval(timer)
   }, [showScrapeInlineProgress, submitting, selectedJob, progressPercent])
+
+  useEffect(() => {
+    if (activeView !== 'export') return
+    if (!selectedFaqSpreadsheetId) {
+      setExportStep(1)
+    }
+  }, [activeView, selectedFaqSpreadsheetId])
 
   const googleSessionPanel = (
     <aside className="panel side-panel google-session-panel">
@@ -1644,95 +1665,115 @@ export default function App() {
 
             <div className="main-stack">
               <div className="main-stack-frame">
+                <div className="workflow-stepper" aria-label="Progrés exportació">
+                  <button type="button" className={`workflow-step-pill${exportStep === 1 ? ' active' : ''}`} onClick={() => setExportStep(1)}>
+                    Pas 1: Arxiu FAQ
+                  </button>
+                  <button type="button" className={`workflow-step-pill${exportStep === 2 ? ' active' : ''}`} onClick={() => { if (canGoNextExportStep) setExportStep(2) }} disabled={!canGoNextExportStep}>
+                    Pas 2: Generar codi
+                  </button>
+                </div>
+
                 <article className="panel export-primary-card">
-                  <div className="section-head">
-                    <div className="title-with-icon">
-                      <div className="title-row-inline">
-                        <img className="section-illustration" src={htmlLogo} alt="" aria-hidden="true" />
-                        <h2>Exporta codi font per Genweb</h2>
+                  {exportStep === 1 && <h3>Tria l’arxiu amb les FAQs per convertir</h3>}
+
+                  {exportStep === 1 ? (
+                    <>
+                      <label className="field drive-select-field config-drive-field">
+                        <div className="config-picker-row">
+                          <span className="field-with-help config-picker-label">
+                            <span>Tria arxiu FAQ</span>
+                            <span className="inline-help">
+                              <span className="inline-help-trigger" aria-hidden="true">?</span>
+                              <span className="inline-help-popover">Selecciona el Google Sheet de FAQs que vols convertir a codi font. Ruta: El meu Drive &gt; UPC &gt; FAQs.</span>
+                            </span>
+                          </span>
+                          <select
+                            value={selectedFaqSpreadsheetId}
+                            onChange={(event) => {
+                              const nextId = event.target.value
+                              const nextSheet = availableFaqSheets.find((item) => item.id === nextId)
+                              setSelectedFaqSpreadsheetId(nextId)
+                              setSelectedFaqSpreadsheetTitle(nextSheet?.name || FIXED_SPREADSHEET_TITLE)
+                            }}
+                            disabled={!isGoogleConnected || driveListBusy || !availableFaqSheets.length}
+                          >
+                            {!availableFaqSheets.length ? (
+                              <option value="">No hi ha fitxers disponibles</option>
+                            ) : (
+                              <>
+                                <option value="">Selecciona un arxiu FAQ</option>
+                                {availableFaqSheets.map((item) => (
+                                  <option key={item.id} value={item.id}>{item.name}</option>
+                                ))}
+                              </>
+                            )}
+                          </select>
+                        </div>
+                      </label>
+                    </>
+                  ) : (
+                    <div className="action-stack">
+                      {isGoogleConnected ? (
+                        <>
+                          <button type="button" onClick={generateHtmlFromExternalSource} disabled={generatorBusy || !selectedFaqSpreadsheetId}>{generatorBusy ? 'Generant...' : 'Generar codi font'}</button>
+                          {generatorMissingSheet ? (
+                            <div className="generator-error-box" role="alert">
+                              No hi ha cap arxiu Excel amb FAQs.
+                            </div>
+                          ) : (generatorBusy || generatorCompleted) && (
+                            <div className="mini-progress-row">
+                              <div className="mini-progress" aria-live="polite" aria-label={`Generant codi, ${generatorProgress}%`}>
+                                <div className="mini-progress-bar">
+                                  <span style={{ width: `${generatorProgress}%` }} />
+                                </div>
+                                <strong>{`${generatorProgress}%`}</strong>
+                              </div>
+                            </div>
+                          )}
+                        </>
+                      ) : (
+                        <p className="scrape-login-warning">No has iniciat sessió de Google. Connecta't per generar el codi font.</p>
+                      )}
+                    </div>
+                  )}
+
+                  {exportStep === 2 && (
+                    <div className="export-code-inline">
+                      {generatorCompleted && (
+                        <div className="download-success-banner" role="status" aria-live="polite">
+                          {`Generat codi font amb ${generatorApprovedRows} faqs aprobades i ${generatorSubtopics} subtopics.`}
+                        </div>
+                      )}
+                      {generatorNoApprovedFaqs && (
+                        <div className="download-error-banner" role="alert" aria-live="assertive">
+                          No s&apos;ha trobat cap faq aprobada.
+                        </div>
+                      )}
+                      <pre className="code-block">{lastGeneratedCode || 'Encara no s’ha generat cap HTML.'}</pre>
+                      <div className="code-hint-row">
+                        {lastGeneratedCode.trim() && (
+                          <>
+                            <button type="button" className="copy-inline-button" onClick={copyGeneratedCode}>
+                              Copia
+                            </button>
+                            {copyFeedbackVisible && <span className="copy-success-indicator" aria-label="Copiat" />}
+                          </>
+                        )}
+                        <p className="muted">Enganxa aquest codi en un bloc HTML de Genweb. El resultat ja ve agrupat i amb el comportament d’acordió.</p>
                       </div>
                     </div>
-                  </div>
+                  )}
 
-                  <label className="field drive-select-field">
-                    <span className="field-with-help">
-                      <span>Tria arxiu FAQ</span>
-                      <span className="inline-help">
-                        <span className="inline-help-trigger" aria-hidden="true">?</span>
-                        <span className="inline-help-popover">Selecciona el Google Sheet de FAQs que vols convertir a codi font.</span>
-                      </span>
-                    </span>
-                    <select
-                      value={selectedFaqSpreadsheetId}
-                      onChange={(event) => {
-                        const nextId = event.target.value
-                        const nextSheet = availableFaqSheets.find((item) => item.id === nextId)
-                        setSelectedFaqSpreadsheetId(nextId)
-                        setSelectedFaqSpreadsheetTitle(nextSheet?.name || FIXED_SPREADSHEET_TITLE)
-                      }}
-                      disabled={!isGoogleConnected || driveListBusy || !availableFaqSheets.length}
-                    >
-                      {!availableFaqSheets.length ? (
-                        <option value="">No hi ha fitxers disponibles</option>
-                      ) : (
-                        <>
-                          <option value="">Selecciona un arxiu FAQ</option>
-                          {availableFaqSheets.map((item) => (
-                            <option key={item.id} value={item.id}>{item.name}</option>
-                          ))}
-                        </>
-                      )}
-                    </select>
-                  </label>
-
-                  <p className="muted">
-                    Arxiu seleccionat: <strong>{selectedFaqSheet?.name || selectedFaqSpreadsheetTitle || FIXED_SPREADSHEET_TITLE}</strong>. Es generarà el codi font de les FAQs amb estat Aprovat.
-                    {' '}
-                  </p>
-
-                  <div className="action-stack">
-                    {isGoogleConnected ? (
-                      <>
-                        <button type="button" onClick={generateHtmlFromExternalSource} disabled={generatorBusy || !selectedFaqSpreadsheetId}>{generatorBusy ? 'Generant...' : 'Generar codi font'}</button>
-                        {generatorMissingSheet ? (
-                          <div className="generator-error-box" role="alert">
-                            No hi ha cap arxiu Excel amb FAQs.
-                          </div>
-                        ) : (generatorBusy || generatorCompleted) && (
-                          <div className="mini-progress-row">
-                            <div className="mini-progress" aria-live="polite" aria-label={`Generant codi, ${generatorProgress}%`}>
-                              <div className="mini-progress-bar">
-                                <span style={{ width: `${generatorProgress}%` }} />
-                              </div>
-                              <strong>{`${generatorProgress}%`}</strong>
-                            </div>
-                            {generatorCompleted && <span className="progress-complete-label">Completat</span>}
-                          </div>
-                        )}
-                      </>
-                    ) : (
-                      <p className="scrape-login-warning">No has iniciat sessió de Google. Connecta't per generar el codi font.</p>
-                    )}
-                  </div>
-                </article>
-
-                <article className="panel wide export-code-card">
-                  <div className="section-head">
-                    <div>
-                      <h2>Codi font</h2>
-                    </div>
-                  </div>
-                  <pre className="code-block">{lastGeneratedCode || 'Encara no s’ha generat cap HTML.'}</pre>
-                  <div className="code-hint-row">
-                    {lastGeneratedCode.trim() && (
-                      <>
-                        <button type="button" className="copy-inline-button" onClick={copyGeneratedCode}>
-                          Copia
-                        </button>
-                        {copyFeedbackVisible && <span className="copy-success-indicator" aria-label="Copiat" />}
-                      </>
-                    )}
-                    <p className="muted">Enganxa aquest codi en un bloc HTML de Genweb. El resultat ja ve agrupat i amb el comportament d’acordió.</p>
+                  <div className="workflow-step-actions">
+                    {exportStep !== 1 ? (
+                      <button type="button" className="secondary" onClick={() => setExportStep(1)}>Pas anterior</button>
+                    ) : <span aria-hidden="true" />}
+                    {exportStep === 1 ? (
+                      <button type="button" onClick={() => setExportStep(2)} disabled={!canGoNextExportStep}>
+                        Següent pas
+                      </button>
+                    ) : <span aria-hidden="true" />}
                   </div>
                 </article>
               </div>

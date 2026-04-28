@@ -1047,6 +1047,15 @@ pre {
   box-shadow: 0 12px 24px rgba(0, 59, 92, 0.05);
 }
 
+.export-code-inline {
+  display: grid;
+  gap: 0.75rem;
+  margin-top: 0.6rem;
+  padding: 0;
+  background: transparent;
+  border: 0;
+}
+
 .scrape-inner-card {
   display: grid;
   gap: 1rem;
@@ -1683,6 +1692,19 @@ button.plus-action {
   border-left: 5px solid #2d8a57;
   background: #ecf9f1;
   color: #1c6e43;
+  font-size: 1rem;
+  font-weight: 700;
+  line-height: 1.35;
+  border-radius: 0.45rem;
+}
+
+.download-error-banner {
+  margin-top: 0.7rem;
+  padding: 0.95rem 1.1rem;
+  border: 1px solid #e3a1aa;
+  border-left: 5px solid #c7283c;
+  background: #fdecee;
+  color: #7a1020;
   font-size: 1rem;
   font-weight: 700;
   line-height: 1.35;
