@@ -1266,12 +1266,25 @@ pre {
   justify-content: start;
 }
 
+.workflow-card .field.config-drive-field + .field.config-drive-field {
+  margin-top: 0.45rem;
+}
+
 .workflow-card.is-disabled {
   opacity: 0.42;
   filter: grayscale(100%);
 }
 
 .workflow-card.is-disabled * {
+  pointer-events: none;
+}
+
+.export-primary-card.is-disabled {
+  opacity: 0.42;
+  filter: grayscale(100%);
+}
+
+.export-primary-card.is-disabled * {
   pointer-events: none;
 }
 

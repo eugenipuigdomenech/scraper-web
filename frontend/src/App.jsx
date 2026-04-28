@@ -52,6 +52,10 @@ function createShareRecipient(value = '') {
   }
 }
 
+function formatConfigDisplayName(name) {
+  return (name || '').replace(/\.csv$/i, '')
+}
+
 function normalizeUrlRow(row) {
   if (typeof row === 'string') {
     return { id: crypto.randomUUID(), value: row, enabled: true }
@@ -181,6 +185,7 @@ function loadPersistedState() {
     return {
       ...defaultState,
       ...parsed,
+      lastGeneratedCode: '',
       sources: normalizeSources(parsed.sources),
       shareRecipients: normalizeShareRecipients(parsed.shareRecipients),
     }
@@ -284,6 +289,9 @@ export default function App() {
   const autosaveTimerRef = useRef(null)
   const autosaveInitializedRef = useRef(false)
   const lastAutosaveKeyRef = useRef('')
+  const sourcesEditedRef = useRef(false)
+  const configLoadRequestIdRef = useRef(0)
+  const configLoadAbortRef = useRef(null)
 
   const { valid: validSources, invalid: invalidSources } = useMemo(() => extractUniqueSources(sources), [sources])
   const isGoogleConnected = Boolean(googleSession?.connected)
@@ -303,10 +311,12 @@ export default function App() {
   const step4Enabled = hasUnlockedStepFlow || scrapeStep >= 3
   const canGoNextStep = scrapeStep === 1
     ? step2Enabled
-      : (scrapeStep === 2
-        ? step3Enabled
-        : scrapeStep === 3)
-  const canGoNextExportStep = Boolean(selectedFaqSpreadsheetId)
+    : (scrapeStep === 2
+      ? step3Enabled
+      : scrapeStep === 3)
+  const exportStep1Enabled = isGoogleConnected
+  const exportStep2Enabled = isGoogleConnected && Boolean(selectedFaqSpreadsheetId)
+  const canGoNextExportStep = exportStep2Enabled
   const workflowSteps = [
     { id: 1, title: 'Pas 1: Configuració', enabled: true },
     { id: 2, title: 'Pas 2: Fitxer Sheets', enabled: step2Enabled },
@@ -323,16 +333,14 @@ export default function App() {
           ? 'Pas 3. Decideix si vols compartir el fitxer i amb qui.'
           : 'Pas 4. Defineix topics i URLs, i executa la descàrrega de FAQs.')))
   const exportWorkflowMessage = !isGoogleConnected
-    ? 'Inicia sessió amb Google.'
+    ? ''
     : (!availableFaqSheets.length
       ? 'No hi ha arxius FAQ disponibles. Primer genera o exporta un arxiu FAQ.'
       : (!selectedFaqSpreadsheetId
         ? 'Tria l’arxiu FAQ que vols convertir a codi font.'
         : (generatorBusy
           ? 'S’està generant el codi font.'
-          : (lastGeneratedCode.trim()
-            ? 'Codi generat. Revisa’l i copia’l a Genweb.'
-            : 'Arxiu FAQ triat. Ara genera el codi font.'))))
+          : 'Arxiu FAQ triat. Ara genera el codi font.')))
   const selectedFaqSheet = useMemo(
     () => availableFaqSheets.find((item) => item.id === selectedFaqSpreadsheetId) || null,
     [availableFaqSheets, selectedFaqSpreadsheetId],
@@ -370,7 +378,6 @@ export default function App() {
           activeView,
           sources,
           debug,
-          lastGeneratedCode,
           lastSelectedJobId: selectedJobId,
           selectedFaqSpreadsheetId,
           selectedFaqSpreadsheetTitle,
@@ -386,7 +393,6 @@ export default function App() {
     activeView,
     sources,
     debug,
-    lastGeneratedCode,
     selectedJobId,
     selectedFaqSpreadsheetId,
     selectedFaqSpreadsheetTitle,
@@ -460,17 +466,6 @@ export default function App() {
         setSelectedConfigFileName('')
         setNewConfigFileName('')
         setConfigSelectionType('none')
-      } else {
-        const currentConfig = configItems.find((item) => item.id === selectedConfigFileId)
-        const preferredConfig = currentConfig
-          || configItems.find((item) => item.name === selectedConfigFileName)
-          || configItems[0]
-        setSelectedConfigFileId(preferredConfig.id)
-        setSelectedConfigFileName(preferredConfig.name)
-        if (configSelectionType !== 'new') {
-          setConfigSelectionType('drive')
-          setNewConfigFileName('')
-        }
       }
     } finally {
       setDriveListBusy(false)
@@ -544,16 +539,17 @@ export default function App() {
     }))
 
     setSources(nextSources.length > 0 ? nextSources : [createEmptySource()])
+    sourcesEditedRef.current = false
     setExportMessage(`Configuracio carregada des de ${originLabel}.`)
   }
 
   function createNewConfiguration() {
-    const stamp = new Date().toISOString().slice(0, 10)
     setSources([createEmptySource()])
     setSelectedConfigFileId('')
     setSelectedConfigFileName('')
     setConfigSelectionType('new')
-    setNewConfigFileName(`faq-config-${stamp}.csv`)
+    setNewConfigFileName('')
+    sourcesEditedRef.current = false
     autosaveInitializedRef.current = false
     lastAutosaveKeyRef.current = ''
     setExportMessage('Nova configuracio preparada. Ja pots afegir topics i URLs.')
@@ -561,6 +557,14 @@ export default function App() {
 
   async function loadSelectedConfigFile(fileId, fileName) {
     const cleanFileId = (fileId || '').trim()
+    const requestId = configLoadRequestIdRef.current + 1
+    configLoadRequestIdRef.current = requestId
+    if (configLoadAbortRef.current) {
+      configLoadAbortRef.current.abort()
+    }
+    const abortController = new AbortController()
+    configLoadAbortRef.current = abortController
+
     if (!cleanFileId) {
       setSelectedConfigFileId('')
       setSelectedConfigFileName('')
@@ -576,15 +580,24 @@ export default function App() {
 
     try {
       const params = new URLSearchParams({ file_id: cleanFileId })
-      const response = await apiFetch(`${API_BASE}/api/google/drive/file-content?${params.toString()}`)
+      const response = await apiFetch(`${API_BASE}/api/google/drive/file-content?${params.toString()}`, {
+        signal: abortController.signal,
+      })
       const data = await response.json().catch(() => null)
       if (!response.ok) throw new Error(data?.detail || `HTTP ${response.status}`)
+      if (requestId !== configLoadRequestIdRef.current) return
       const importedRows = parseConfigCsv(data?.content || '')
       applyImportedConfigRows(importedRows, fileName || 'Drive')
       autosaveInitializedRef.current = false
       lastAutosaveKeyRef.current = ''
     } catch (error) {
+      if (abortController.signal.aborted) return
+      if (requestId !== configLoadRequestIdRef.current) return
       setExportMessage(error instanceof Error ? error.message : 'No s’ha pogut carregar la configuració seleccionada.')
+    } finally {
+      if (configLoadAbortRef.current === abortController) {
+        configLoadAbortRef.current = null
+      }
     }
   }
 
@@ -739,6 +752,7 @@ export default function App() {
   }, [selectedJobId, selectedJob?.status, googleSession?.connected, downloadBusy, lastAutoExportedJobId])
 
   function addTopic() {
+    sourcesEditedRef.current = true
     setSources((current) => [
       ...current,
       createEmptySource(),
@@ -746,6 +760,7 @@ export default function App() {
   }
 
   function updateTopic(id, field, value) {
+    sourcesEditedRef.current = true
     setSources((current) =>
       current.map((group) => {
         if (group.id !== id) return group
@@ -756,6 +771,7 @@ export default function App() {
   }
 
   function addUrl(topicId) {
+    sourcesEditedRef.current = true
     setSources((current) =>
       current.map((group) =>
         group.id === topicId
@@ -766,10 +782,12 @@ export default function App() {
   }
 
   function removeTopic(topicId) {
+    sourcesEditedRef.current = true
     setSources((current) => (current.length === 1 ? current : current.filter((group) => group.id !== topicId)))
   }
 
   function removeUrl(topicId, urlId) {
+    sourcesEditedRef.current = true
     setSources((current) =>
       current.map((group) => {
         if (group.id !== topicId) return group
@@ -800,7 +818,7 @@ export default function App() {
   function resolveConfigFileName() {
     const stamp = new Date().toISOString().slice(0, 10)
     const baseName = configSelectionType === 'new'
-      ? (newConfigFileName || `faq-config-${stamp}.csv`)
+      ? newConfigFileName
       : (currentConfigFile?.name || selectedConfigFileName || `faq-config-${stamp}.csv`)
     const trimmedName = baseName.trim()
     if (!trimmedName) return ''
@@ -860,6 +878,8 @@ export default function App() {
       return
     }
 
+    if (!sourcesEditedRef.current) return
+
     const autosaveKey = `${fileName}\n${buildConfigCsvText()}`
     if (!autosaveInitializedRef.current) {
       autosaveInitializedRef.current = true
@@ -876,6 +896,7 @@ export default function App() {
       const saved = await saveConfigToDrive({ silent: true })
       if (saved) {
         lastAutosaveKeyRef.current = autosaveKey
+        sourcesEditedRef.current = false
         setAutosaveStatus('saved')
       } else {
         setAutosaveStatus('error')
@@ -1146,10 +1167,30 @@ export default function App() {
 
   useEffect(() => {
     if (activeView !== 'export') return
-    if (!selectedFaqSpreadsheetId) {
+    setLastGeneratedCode('')
+    setGeneratorCompleted(false)
+    setGeneratorBusy(false)
+    setGeneratorProgress(0)
+    setGeneratorMissingSheet(false)
+    setGeneratorNoApprovedFaqs(false)
+    setGeneratorApprovedRows(0)
+    setGeneratorSubtopics(0)
+    setCopyFeedbackVisible(false)
+    if (!exportStep1Enabled || !selectedFaqSpreadsheetId) {
       setExportStep(1)
     }
-  }, [activeView, selectedFaqSpreadsheetId])
+  }, [activeView, exportStep1Enabled, selectedFaqSpreadsheetId])
+
+  useEffect(() => {
+    if (activeView !== 'scrape') return
+    setActivityLogs([])
+    setJobResult(null)
+    setSelectedJob(null)
+    setSelectedJobId('')
+    setScrapeVisualProgress(0)
+    setLogsCollapsed(false)
+    setLastAutoExportedJobId('')
+  }, [activeView])
 
   const googleSessionPanel = (
     <aside className="panel side-panel google-session-panel">
@@ -1355,7 +1396,7 @@ export default function App() {
                                     <option value="">Selecciona una configuració</option>
                                     <option value="__NEW__">Nova configuració</option>
                                     {availableConfigFiles.map((item) => (
-                                      <option key={item.id} value={item.id}>{item.name}</option>
+                                      <option key={item.id} value={item.id}>{formatConfigDisplayName(item.name)}</option>
                                     ))}
                                   </select>
                                 </div>
@@ -1370,7 +1411,7 @@ export default function App() {
                                       type="text"
                                       value={newConfigFileName}
                                       onChange={(event) => setNewConfigFileName(event.target.value)}
-                                      placeholder="faq-config-2026-04-27.csv"
+                                      placeholder=""
                                       disabled={!isGoogleConnected}
                                     />
                                   </div>
@@ -1388,83 +1429,70 @@ export default function App() {
                           </div>
                           <div className="collapsible-region">
                             <div className="collapsible-region-inner sheet-choice-stack">
-                            <label className="check-row">
-                              <input
-                                type="radio"
-                                name="sheet-selection-mode"
-                                checked={sheetSelectionMode === 'existing'}
-                                onChange={() => {
-                                  setSheetSelectionMode('existing')
-                                  setNewSpreadsheetTitle('')
-                                }}
-                                disabled={!sheetStepEnabled}
-                              />
-                              <span>Triar Sheet existent del Drive</span>
-                            </label>
-                            <label className="field drive-select-field sheet-child-row">
-                              <span className="field-with-help">
-                                <span>Arxius FAQ disponibles</span>
-                                <span className="inline-help">
-                                  <span className="inline-help-trigger" aria-hidden="true">?</span>
-                                  <span className="inline-help-popover">Ruta FAQs per defecte: {FIXED_DRIVE_PATH}</span>
-                                </span>
-                              </span>
-                              <select
-                                value={sheetSelectionMode === 'existing' ? selectedFaqSpreadsheetId : ''}
-                                onChange={(event) => {
-                                  const nextId = event.target.value
-                                  const nextSheet = availableFaqSheets.find((item) => item.id === nextId)
-                                  setSelectedFaqSpreadsheetId(nextId)
-                                  setSelectedFaqSpreadsheetTitle(nextSheet?.name || FIXED_SPREADSHEET_TITLE)
-                                  setSheetSelectionMode('existing')
-                                }}
-                                disabled={!sheetStepEnabled || driveListBusy || !availableFaqSheets.length}
-                              >
-                                {!availableFaqSheets.length ? (
-                                  <option value="">No hi ha fitxers disponibles</option>
-                                ) : (
-                                  <>
-                                    <option value="">Selecciona un Google Sheet</option>
+                              <label className="field drive-select-field config-drive-field">
+                                <div className="config-picker-row">
+                                  <span className="field-with-help config-picker-label">
+                                    <span>Carrega un Google Sheets</span>
+                                    <span className="inline-help">
+                                      <span className="inline-help-trigger" aria-hidden="true">?</span>
+                                      <span className="inline-help-popover">Ruta FAQs per defecte: {FIXED_DRIVE_PATH}</span>
+                                    </span>
+                                  </span>
+                                  <select
+                                    value={sheetSelectionMode === 'new' ? '__NEW__' : selectedFaqSpreadsheetId}
+                                    onChange={(event) => {
+                                      const nextId = event.target.value
+                                      if (!nextId) {
+                                        setSheetSelectionMode('')
+                                        setSelectedFaqSpreadsheetId('')
+                                        setNewSpreadsheetTitle('')
+                                        return
+                                      }
+                                      if (nextId === '__NEW__') {
+                                        setSheetSelectionMode('new')
+                                        setSelectedFaqSpreadsheetId('')
+                                        setNewSpreadsheetTitle(selectedFaqSpreadsheetTitle || FIXED_SPREADSHEET_TITLE)
+                                        return
+                                      }
+                                      const nextSheet = availableFaqSheets.find((item) => item.id === nextId)
+                                      setSelectedFaqSpreadsheetId(nextId)
+                                      setSelectedFaqSpreadsheetTitle(nextSheet?.name || FIXED_SPREADSHEET_TITLE)
+                                      setSheetSelectionMode('existing')
+                                      setNewSpreadsheetTitle('')
+                                    }}
+                                    disabled={!sheetStepEnabled || driveListBusy}
+                                  >
+                                    <option value="">Selecciona un sheets</option>
+                                    <option value="__NEW__">Sheet nou</option>
                                     {availableFaqSheets.map((item) => (
                                       <option key={item.id} value={item.id}>{item.name}</option>
                                     ))}
-                                  </>
-                                )}
-                              </select>
-                            </label>
-                            <label className="check-row">
-                              <input
-                                type="radio"
-                                name="sheet-selection-mode"
-                                checked={sheetSelectionMode === 'new'}
-                                onChange={() => {
-                                  setSheetSelectionMode('new')
-                                  setSelectedFaqSpreadsheetId('')
-                                  setNewSpreadsheetTitle(selectedFaqSpreadsheetTitle || FIXED_SPREADSHEET_TITLE)
-                                }}
-                                disabled={!sheetStepEnabled}
-                              />
-                              <span>Crear un Sheet nou</span>
-                            </label>
-                            <label className="field sheet-child-row">
-                              <span className="field-with-help">
-                                <span>Nom del nou Google Sheet</span>
-                                <span className="inline-help">
-                                  <span className="inline-help-trigger" aria-hidden="true">?</span>
-                                  <span className="inline-help-popover">Es desarà a: {FIXED_DRIVE_PATH}</span>
-                                </span>
-                              </span>
-                              <input
-                                type="text"
-                                value={sheetSelectionMode === 'new' ? newSpreadsheetTitle : ''}
-                                onChange={(event) => {
-                                  setNewSpreadsheetTitle(event.target.value)
-                                  setSelectedFaqSpreadsheetTitle(event.target.value)
-                                }}
-                                placeholder={FIXED_SPREADSHEET_TITLE}
-                                disabled={!sheetStepEnabled || sheetSelectionMode !== 'new'}
-                              />
-                            </label>
+                                  </select>
+                                </div>
+                              </label>
+                              {sheetSelectionMode === 'new' && (
+                                <label className="field drive-select-field config-drive-field">
+                                  <div className="config-picker-row">
+                                    <span className="field-with-help config-picker-label">
+                                      <span>Nom del nou Google Sheet</span>
+                                      <span className="inline-help">
+                                        <span className="inline-help-trigger" aria-hidden="true">?</span>
+                                        <span className="inline-help-popover">Es desarà a: {FIXED_DRIVE_PATH}</span>
+                                      </span>
+                                    </span>
+                                    <input
+                                      type="text"
+                                      value={newSpreadsheetTitle}
+                                      onChange={(event) => {
+                                        setNewSpreadsheetTitle(event.target.value)
+                                        setSelectedFaqSpreadsheetTitle(event.target.value)
+                                      }}
+                                      placeholder={FIXED_SPREADSHEET_TITLE}
+                                      disabled={!sheetStepEnabled}
+                                    />
+                                  </div>
+                                </label>
+                              )}
                             </div>
                           </div>
                         </section>
@@ -1644,10 +1672,23 @@ export default function App() {
                       ) : <span aria-hidden="true" />}
                       <button
                         type="button"
-                        onClick={() => setScrapeStep((current) => Math.min(4, current + 1))}
-                        disabled={scrapeStep === 4 || !canGoNextStep}
+                        onClick={() => {
+                          if (scrapeStep === 4) {
+                            setActivityLogs([])
+                            setJobResult(null)
+                            setSelectedJob(null)
+                            setSelectedJobId('')
+                            setScrapeVisualProgress(0)
+                            setLogsCollapsed(false)
+                            setLastAutoExportedJobId('')
+                            setScrapeStep(1)
+                            return
+                          }
+                          setScrapeStep((current) => Math.min(4, current + 1))
+                        }}
+                        disabled={scrapeStep === 4 ? false : !canGoNextStep}
                       >
-                        Següent pas
+                        {scrapeStep === 4 ? 'Tornar a l\'inici' : 'Següent pas'}
                       </button>
                     </div>
                   </div>
@@ -1666,15 +1707,15 @@ export default function App() {
             <div className="main-stack">
               <div className="main-stack-frame">
                 <div className="workflow-stepper" aria-label="Progrés exportació">
-                  <button type="button" className={`workflow-step-pill${exportStep === 1 ? ' active' : ''}`} onClick={() => setExportStep(1)}>
+                  <button type="button" className={`workflow-step-pill${exportStep === 1 ? ' active' : ''}`} onClick={() => setExportStep(1)} disabled={!exportStep1Enabled}>
                     Pas 1: Arxiu FAQ
                   </button>
-                  <button type="button" className={`workflow-step-pill${exportStep === 2 ? ' active' : ''}`} onClick={() => { if (canGoNextExportStep) setExportStep(2) }} disabled={!canGoNextExportStep}>
+                  <button type="button" className={`workflow-step-pill${exportStep === 2 ? ' active' : ''}`} onClick={() => { if (canGoNextExportStep) setExportStep(2) }} disabled={!exportStep2Enabled}>
                     Pas 2: Generar codi
                   </button>
                 </div>
 
-                <article className="panel export-primary-card">
+                <article className={`panel export-primary-card${(exportStep === 1 && !exportStep1Enabled) || (exportStep === 2 && !exportStep2Enabled) ? ' is-disabled' : ''}`}>
                   {exportStep === 1 && <h3>Tria l’arxiu amb les FAQs per convertir</h3>}
 
                   {exportStep === 1 ? (
@@ -1696,7 +1737,7 @@ export default function App() {
                               setSelectedFaqSpreadsheetId(nextId)
                               setSelectedFaqSpreadsheetTitle(nextSheet?.name || FIXED_SPREADSHEET_TITLE)
                             }}
-                            disabled={!isGoogleConnected || driveListBusy || !availableFaqSheets.length}
+                            disabled={!exportStep1Enabled || driveListBusy || !availableFaqSheets.length}
                           >
                             {!availableFaqSheets.length ? (
                               <option value="">No hi ha fitxers disponibles</option>
@@ -1716,7 +1757,7 @@ export default function App() {
                     <div className="action-stack">
                       {isGoogleConnected ? (
                         <>
-                          <button type="button" onClick={generateHtmlFromExternalSource} disabled={generatorBusy || !selectedFaqSpreadsheetId}>{generatorBusy ? 'Generant...' : 'Generar codi font'}</button>
+                          <button type="button" onClick={generateHtmlFromExternalSource} disabled={!exportStep2Enabled || generatorBusy || !selectedFaqSpreadsheetId}>{generatorBusy ? 'Generant...' : 'Generar codi font'}</button>
                           {generatorMissingSheet ? (
                             <div className="generator-error-box" role="alert">
                               No hi ha cap arxiu Excel amb FAQs.
@@ -1767,7 +1808,7 @@ export default function App() {
 
                   <div className="workflow-step-actions">
                     {exportStep !== 1 ? (
-                      <button type="button" className="secondary" onClick={() => setExportStep(1)}>Pas anterior</button>
+                      <button type="button" className="secondary" onClick={() => setExportStep(1)} disabled={!exportStep1Enabled}>Pas anterior</button>
                     ) : <span aria-hidden="true" />}
                     {exportStep === 1 ? (
                       <button type="button" onClick={() => setExportStep(2)} disabled={!canGoNextExportStep}>
