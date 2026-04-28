@@ -643,6 +643,7 @@ def ensure_fixed_faqs_spreadsheet_oauth(
     token_file: str = "token.json",
     log=None,
     create_missing: bool = True,
+    spreadsheet_title: str | None = None,
 ) -> dict[str, str]:
     def _log(message: str):
         if log:
@@ -673,16 +674,17 @@ def ensure_fixed_faqs_spreadsheet_oauth(
     else:
         _log(f"Carpeta trobada dins de {FIXED_DRIVE_ROOT_FOLDER}: {FIXED_DRIVE_FAQS_FOLDER}")
 
-    spreadsheet = _find_drive_spreadsheet(creds=creds, parent_id=faqs_folder["id"], name=FIXED_SPREADSHEET_TITLE)
+    target_spreadsheet_title = (spreadsheet_title or FIXED_SPREADSHEET_TITLE).strip() or FIXED_SPREADSHEET_TITLE
+    spreadsheet = _find_drive_spreadsheet(creds=creds, parent_id=faqs_folder["id"], name=target_spreadsheet_title)
     if spreadsheet is None:
         if not create_missing:
             raise RuntimeError(
-                f"No s'ha trobat cap document '{FIXED_SPREADSHEET_TITLE}' a {FIXED_DRIVE_ROOT_FOLDER}/{FIXED_DRIVE_FAQS_FOLDER}."
+                f"No s'ha trobat cap document '{target_spreadsheet_title}' a {FIXED_DRIVE_ROOT_FOLDER}/{FIXED_DRIVE_FAQS_FOLDER}."
             )
-        spreadsheet = _create_drive_spreadsheet(creds=creds, parent_id=faqs_folder["id"], name=FIXED_SPREADSHEET_TITLE)
-        _log(f"Google Sheet creat a {FIXED_DRIVE_ROOT_FOLDER}/{FIXED_DRIVE_FAQS_FOLDER}: {FIXED_SPREADSHEET_TITLE}")
+        spreadsheet = _create_drive_spreadsheet(creds=creds, parent_id=faqs_folder["id"], name=target_spreadsheet_title)
+        _log(f"Google Sheet creat a {FIXED_DRIVE_ROOT_FOLDER}/{FIXED_DRIVE_FAQS_FOLDER}: {target_spreadsheet_title}")
     else:
-        _log(f"Google Sheet trobat a {FIXED_DRIVE_ROOT_FOLDER}/{FIXED_DRIVE_FAQS_FOLDER}: {FIXED_SPREADSHEET_TITLE}")
+        _log(f"Google Sheet trobat a {FIXED_DRIVE_ROOT_FOLDER}/{FIXED_DRIVE_FAQS_FOLDER}: {target_spreadsheet_title}")
 
     sh = client.open_by_key(spreadsheet["id"])
     return {

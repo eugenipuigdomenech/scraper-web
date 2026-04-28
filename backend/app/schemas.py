@@ -116,6 +116,7 @@ class SheetsExportRequest(BaseModel):
 class SheetsExportResponse(BaseModel):
     job_id: str
     approved_rows: int
+    spreadsheet_id: str
     spreadsheet_title: str
     worksheet_name: str
 

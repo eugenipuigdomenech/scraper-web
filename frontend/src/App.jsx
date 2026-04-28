@@ -245,6 +245,7 @@ export default function App() {
   const [configSelectionType, setConfigSelectionType] = useState('none')
   const [sheetSelectionMode, setSheetSelectionMode] = useState('')
   const [newSpreadsheetTitle, setNewSpreadsheetTitle] = useState('')
+  const [newConfigFileName, setNewConfigFileName] = useState('')
 
   const [_JOBS, setJobs] = useState([])
   const [selectedJob, setSelectedJob] = useState(null)
@@ -256,7 +257,7 @@ export default function App() {
   const [availableConfigFiles, setAvailableConfigFiles] = useState([])
   const [driveListBusy, setDriveListBusy] = useState(false)
   const [shareBusy, setShareBusy] = useState(false)
-  const [saveConfigBusy, setSaveConfigBusy] = useState(false)
+  const [, setSaveConfigBusy] = useState(false)
   const [shareRecipients, setShareRecipients] = useState(normalizeShareRecipients(persisted.shareRecipients))
 
   const [processMessage, setProcessMessage] = useState('')
@@ -274,12 +275,12 @@ export default function App() {
   const [logsCollapsed, setLogsCollapsed] = useState(false)
   const [googleBusy, setGoogleBusy] = useState(false)
   const [lastAutoExportedJobId, setLastAutoExportedJobId] = useState('')
-  const [shareStepDone, setShareStepDone] = useState(false)
-  const [configCardCollapsed, setConfigCardCollapsed] = useState(false)
-  const [sheetCardCollapsed, setSheetCardCollapsed] = useState(true)
-  const [shareCardCollapsed, setShareCardCollapsed] = useState(true)
-  const [downloaderCardCollapsed, setDownloaderCardCollapsed] = useState(true)
-  const configFileInputRef = useRef(null)
+  const [scrapeStep, setScrapeStep] = useState(1)
+  const [hasUnlockedStepFlow, setHasUnlockedStepFlow] = useState(false)
+  const [autosaveStatus, setAutosaveStatus] = useState('idle')
+  const autosaveTimerRef = useRef(null)
+  const autosaveInitializedRef = useRef(false)
+  const lastAutosaveKeyRef = useRef('')
 
   const { valid: validSources, invalid: invalidSources } = useMemo(() => extractUniqueSources(sources), [sources])
   const isGoogleConnected = Boolean(googleSession?.connected)
@@ -293,23 +294,30 @@ export default function App() {
       : (sheetSelectionMode === 'new' && Boolean((newSpreadsheetTitle || '').trim()))
   )
   const shareStepEnabled = sheetStepComplete
-  const downloaderStepEnabled = shareStepEnabled && shareStepDone
-  const configStepActive = !configStepComplete
-  const sheetStepActive = configStepComplete && !sheetStepComplete
-  const shareStepActive = sheetStepComplete && !shareStepDone
-  const downloaderStepActive = shareStepDone
-  const configLabel = configSelectionType === 'new'
-    ? 'Nova configuració'
-    : (selectedConfigFileName || 'Configuració seleccionada')
+  const downloaderStepEnabled = hasUnlockedStepFlow || shareStepEnabled
+  const step2Enabled = hasUnlockedStepFlow || configStepComplete
+  const step3Enabled = hasUnlockedStepFlow || sheetStepComplete
+  const step4Enabled = hasUnlockedStepFlow || scrapeStep >= 3
+  const canGoNextStep = scrapeStep === 1
+    ? step2Enabled
+    : (scrapeStep === 2
+      ? step3Enabled
+      : scrapeStep === 3)
+  const workflowSteps = [
+    { id: 1, title: 'Pas 1: Configuració', enabled: true },
+    { id: 2, title: 'Pas 2: Fitxer Sheets', enabled: step2Enabled },
+    { id: 3, title: 'Pas 3: Compartir', enabled: step3Enabled },
+    { id: 4, title: 'Pas 4: Descarregador', enabled: step4Enabled },
+  ]
   const workflowSidebarMessage = !isGoogleConnected
-    ? 'Inicia sessió amb Google.'
-    : (!configStepComplete
-      ? 'Carrega una configuració guardada d’un ús anterior de l’aplicació.'
-      : (!sheetStepComplete
-        ? `${configLabel} llesta. Tria el Sheet.`
-        : (!shareStepDone
-          ? 'Tria si vols compartir.'
-          : 'Especifica el topic i les URLs amb les FAQs que vols descarregar.')))
+    ? ''
+    : (scrapeStep === 1
+      ? 'Pas 1. Tria una configuració existent o crea una configuració nova.'
+      : (scrapeStep === 2
+        ? 'Pas 2. Tria el Google Sheet de destí o crea’n un de nou.'
+        : (scrapeStep === 3
+          ? 'Pas 3. Decideix si vols compartir el fitxer i amb qui.'
+          : 'Pas 4. Defineix topics i URLs, i executa la descàrrega de FAQs.')))
   const exportWorkflowMessage = !isGoogleConnected
     ? 'Inicia sessió amb Google.'
     : (!availableFaqSheets.length
@@ -329,6 +337,10 @@ export default function App() {
     () => availableConfigFiles.find((item) => item.id === selectedConfigFileId) || null,
     [availableConfigFiles, selectedConfigFileId],
   )
+  const completedFaqCount = jobResult?.stats?.total_faqs ?? 0
+  const exportedSpreadsheetLabel = selectedFaqSheet?.name || selectedFaqSpreadsheetTitle || FIXED_SPREADSHEET_TITLE
+  const savedConfigLabel = currentConfigFile?.name || selectedConfigFileName || newConfigFileName || 'configuracio actual'
+  const showDownloadSuccessBanner = isGoogleConnected && downloaderStepEnabled && scrapeVisualProgress >= 100 && Boolean(jobResult)
 
   async function apiFetch(url, options = {}) {
     const googleSessionId = getGoogleSessionId()
@@ -347,21 +359,25 @@ export default function App() {
   }
 
   useEffect(() => {
-    window.localStorage.setItem(
-      STORAGE_KEY,
-      JSON.stringify({
-        activeView,
-        sources,
-        debug,
-        lastGeneratedCode,
-        lastSelectedJobId: selectedJobId,
-        selectedFaqSpreadsheetId,
-        selectedFaqSpreadsheetTitle,
-        selectedConfigFileId,
-        selectedConfigFileName,
-        shareRecipients,
-      }),
-    )
+    try {
+      window.localStorage.setItem(
+        STORAGE_KEY,
+        JSON.stringify({
+          activeView,
+          sources,
+          debug,
+          lastGeneratedCode,
+          lastSelectedJobId: selectedJobId,
+          selectedFaqSpreadsheetId,
+          selectedFaqSpreadsheetTitle,
+          selectedConfigFileId,
+          selectedConfigFileName,
+          shareRecipients,
+        }),
+      )
+    } catch (error) {
+      console.error('No s’ha pogut desar l’estat local de la UI.', error)
+    }
   }, [
     activeView,
     sources,
@@ -438,6 +454,8 @@ export default function App() {
       if (!configItems.length) {
         setSelectedConfigFileId('')
         setSelectedConfigFileName('')
+        setNewConfigFileName('')
+        setConfigSelectionType('none')
       } else {
         const currentConfig = configItems.find((item) => item.id === selectedConfigFileId)
         const preferredConfig = currentConfig
@@ -445,6 +463,10 @@ export default function App() {
           || configItems[0]
         setSelectedConfigFileId(preferredConfig.id)
         setSelectedConfigFileName(preferredConfig.name)
+        if (configSelectionType !== 'new') {
+          setConfigSelectionType('drive')
+          setNewConfigFileName('')
+        }
       }
     } finally {
       setDriveListBusy(false)
@@ -456,17 +478,11 @@ export default function App() {
     const fileName = selectedFaqSheet?.name || selectedFaqSpreadsheetTitle || FIXED_SPREADSHEET_TITLE
     if (!selectedFaqSpreadsheetId) {
       setExportMessage('Selecciona primer un arxiu de FAQs per compartir.')
-      return
+      return false
     }
     if (!emails.length) {
       setExportMessage('Indica almenys un correu electrònic abans de compartir l’arxiu.')
-      return
-    }
-    const recipientsLabel = emails.length === 1 ? `la persona ${emails[0]}` : `les persones ${emails.join(', ')}`
-    const confirmed = window.confirm(`Vols compartir el fitxer "${fileName}" amb ${recipientsLabel}?`)
-    if (!confirmed) {
-      setExportMessage('Compartició cancel·lada.')
-      return
+      return false
     }
 
     setShareBusy(true)
@@ -486,9 +502,10 @@ export default function App() {
         if (!response.ok) throw new Error(data?.detail || `HTTP ${response.status}`)
       }
       setExportMessage(`Arxiu ${fileName} compartit amb ${emails.join(', ')}.`)
-      setShareStepDone(true)
+      return true
     } catch (error) {
       setExportMessage(error instanceof Error ? error.message : 'No s’ha pogut compartir l’arxiu.')
+      return false
     } finally {
       setShareBusy(false)
     }
@@ -496,7 +513,9 @@ export default function App() {
 
   function applyImportedConfigRows(importedRows, originLabel) {
     if (!importedRows.length) {
-      throw new Error('La configuracio seleccionada no conte cap topic ni URL.')
+      setSources([createEmptySource()])
+      setExportMessage(`Configuracio carregada des de ${originLabel}. El fitxer esta buit; pots afegir topics i URLs al Pas 4.`)
+      return
     }
 
     const groupedSources = new Map()
@@ -525,31 +544,15 @@ export default function App() {
   }
 
   function createNewConfiguration() {
+    const stamp = new Date().toISOString().slice(0, 10)
     setSources([createEmptySource()])
     setSelectedConfigFileId('')
     setSelectedConfigFileName('')
     setConfigSelectionType('new')
-    setSheetCardCollapsed(false)
+    setNewConfigFileName(`faq-config-${stamp}.csv`)
+    autosaveInitializedRef.current = false
+    lastAutosaveKeyRef.current = ''
     setExportMessage('Nova configuracio preparada. Ja pots afegir topics i URLs.')
-  }
-
-  async function importConfigFromComputer(event) {
-    const file = event.target.files?.[0]
-    if (!file) return
-
-    try {
-      const text = await file.text()
-      const importedRows = parseConfigCsv(text)
-      applyImportedConfigRows(importedRows, file.name)
-      setSelectedConfigFileId('')
-      setSelectedConfigFileName(file.name)
-      setConfigSelectionType('import')
-      setSheetCardCollapsed(false)
-    } catch (error) {
-      setExportMessage(error instanceof Error ? error.message : 'No s’ha pogut importar la configuració des de l’ordinador.')
-    } finally {
-      event.target.value = ''
-    }
   }
 
   async function loadSelectedConfigFile(fileId, fileName) {
@@ -558,8 +561,14 @@ export default function App() {
       setSelectedConfigFileId('')
       setSelectedConfigFileName('')
       setConfigSelectionType('none')
+      setNewConfigFileName('')
       return
     }
+
+    setSelectedConfigFileId(cleanFileId)
+    setSelectedConfigFileName(fileName || '')
+    setConfigSelectionType('drive')
+    setNewConfigFileName('')
 
     try {
       const params = new URLSearchParams({ file_id: cleanFileId })
@@ -568,10 +577,8 @@ export default function App() {
       if (!response.ok) throw new Error(data?.detail || `HTTP ${response.status}`)
       const importedRows = parseConfigCsv(data?.content || '')
       applyImportedConfigRows(importedRows, fileName || 'Drive')
-      setSelectedConfigFileId(cleanFileId)
-      setSelectedConfigFileName(fileName || '')
-      setConfigSelectionType('drive')
-      setSheetCardCollapsed(false)
+      autosaveInitializedRef.current = false
+      lastAutosaveKeyRef.current = ''
     } catch (error) {
       setExportMessage(error instanceof Error ? error.message : 'No s’ha pogut carregar la configuració seleccionada.')
     }
@@ -601,17 +608,27 @@ export default function App() {
       setSelectedConfigFileId('')
       setSelectedConfigFileName('')
       setConfigSelectionType('none')
+      setNewConfigFileName('')
       setSheetSelectionMode('')
       setNewSpreadsheetTitle('')
-      setShareStepDone(false)
+      setHasUnlockedStepFlow(false)
       return
     }
     loadFaqSheets().catch(() => {})
   }, [googleSession?.connected])
 
   useEffect(() => {
-    setShareStepDone(false)
-  }, [configSelectionType, sheetSelectionMode, selectedFaqSpreadsheetId, newSpreadsheetTitle])
+    if (scrapeStep === 4) setHasUnlockedStepFlow(true)
+  }, [scrapeStep])
+
+  function goToScrapeStep(targetStep) {
+    if (!Number.isFinite(targetStep)) return
+    const nextStep = Math.max(1, Math.min(targetStep, 4))
+    if (nextStep === 2 && !step2Enabled) return
+    if (nextStep === 3 && !step3Enabled) return
+    if (nextStep === 4 && !step4Enabled) return
+    setScrapeStep(nextStep)
+  }
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search)
@@ -776,13 +793,23 @@ export default function App() {
     return `\uFEFF${rows.join('\r\n')}`
   }
 
-  async function saveConfigToDrive() {
+  function resolveConfigFileName() {
     const stamp = new Date().toISOString().slice(0, 10)
-    const suggestedName = (currentConfigFile?.name || selectedConfigFileName || `faq-config-${stamp}.csv`).trim()
+    const baseName = configSelectionType === 'new'
+      ? (newConfigFileName || `faq-config-${stamp}.csv`)
+      : (currentConfigFile?.name || selectedConfigFileName || `faq-config-${stamp}.csv`)
+    const trimmedName = baseName.trim()
+    if (!trimmedName) return ''
+    return trimmedName.toLowerCase().endsWith('.csv') ? trimmedName : `${trimmedName}.csv`
+  }
+
+  async function saveConfigToDrive({ silent = false } = {}) {
+    const suggestedName = resolveConfigFileName()
+    if (!suggestedName) return false
     const content = buildConfigCsvText()
 
     setSaveConfigBusy(true)
-    setExportMessage('')
+    if (!silent) setExportMessage('')
     try {
       const response = await apiFetch(`${API_BASE}/api/google/faqs/configurations`, {
         method: 'POST',
@@ -796,14 +823,69 @@ export default function App() {
       if (!response.ok) throw new Error(data?.detail || `HTTP ${response.status}`)
       setSelectedConfigFileId(data.file_id || '')
       setSelectedConfigFileName(data.name || suggestedName)
-      setExportMessage(`Configuracio desada a Drive com ${data.name || suggestedName}.`)
-      await loadFaqSheets()
+      if (configSelectionType === 'new') setNewConfigFileName(data.name || suggestedName)
+      if (!silent) {
+        setExportMessage(`Configuracio desada a Drive com ${data.name || suggestedName}.`)
+        await loadFaqSheets()
+      }
+      return true
     } catch (error) {
       setExportMessage(error instanceof Error ? error.message : 'No s’ha pogut desar la configuració a Drive.')
+      return false
     } finally {
       setSaveConfigBusy(false)
     }
   }
+
+  useEffect(() => {
+    if (autosaveTimerRef.current) {
+      window.clearTimeout(autosaveTimerRef.current)
+      autosaveTimerRef.current = null
+    }
+
+    if (!isGoogleConnected || configSelectionType === 'none') {
+      setAutosaveStatus('idle')
+      autosaveInitializedRef.current = false
+      lastAutosaveKeyRef.current = ''
+      return
+    }
+
+    const fileName = resolveConfigFileName()
+    if (!fileName) {
+      setAutosaveStatus('idle')
+      return
+    }
+
+    const autosaveKey = `${fileName}\n${buildConfigCsvText()}`
+    if (!autosaveInitializedRef.current) {
+      autosaveInitializedRef.current = true
+      lastAutosaveKeyRef.current = autosaveKey
+      setAutosaveStatus('saved')
+      return
+    }
+    if (autosaveKey === lastAutosaveKeyRef.current) {
+      return
+    }
+
+    setAutosaveStatus('saving')
+    autosaveTimerRef.current = window.setTimeout(async () => {
+      const saved = await saveConfigToDrive({ silent: true })
+      if (saved) {
+        lastAutosaveKeyRef.current = autosaveKey
+        setAutosaveStatus('saved')
+      } else {
+        setAutosaveStatus('error')
+      }
+      autosaveTimerRef.current = null
+    }, 900)
+
+    return () => {
+      if (autosaveTimerRef.current) {
+        window.clearTimeout(autosaveTimerRef.current)
+        autosaveTimerRef.current = null
+      }
+    }
+  }, [isGoogleConnected, configSelectionType, newConfigFileName, currentConfigFile?.name, selectedConfigFileName, sources])
 
   function addShareRecipient() {
     setShareRecipients((current) => [...current, createShareRecipient('')])
@@ -834,6 +916,12 @@ export default function App() {
     if (invalidSources.length) {
       setProcessError('Hi ha URLs no vàlides. Revisa-les abans de continuar.')
       return
+    }
+
+    const hasShareRecipients = shareRecipients.some((recipient) => recipient.value.trim())
+    if (sheetSelectionMode === 'existing' && selectedFaqSpreadsheetId && hasShareRecipients) {
+      const shared = await shareSelectedFaqFile()
+      if (!shared) return
     }
 
     setSubmitting(true)
@@ -904,7 +992,7 @@ export default function App() {
     const worksheetName = FIXED_WORKSHEET_NAME
 
     setDownloadBusy(true)
-    appendActivityLog(`Exportant FAQs a Google Sheets: ${FIXED_DRIVE_PATH} / ${spreadsheetTitle} / ${worksheetName}`)
+    appendActivityLog(`Exportant FAQs a Google Sheets: ${FIXED_DRIVE_PATH} / ${spreadsheetTitle}`)
     try {
       const response = await apiFetch(`${API_BASE}/api/jobs/${selectedJobId}/export/sheets`, {
         method: 'POST',
@@ -918,7 +1006,7 @@ export default function App() {
       const data = await response.json().catch(() => null)
       if (!response.ok) throw new Error(data?.detail || `HTTP ${response.status}`)
       setExportMessage(`Resultat exportat a Google Sheets a ${FIXED_DRIVE_PATH}/${data.spreadsheet_title}. Fes la revisió i marca Estat=Aprovat al full.`)
-      appendActivityLog(`Exportacio completada: ${FIXED_DRIVE_PATH} / ${data.spreadsheet_title} / ${data.worksheet_name}`)
+      appendActivityLog(`Exportacio completada: ${FIXED_DRIVE_PATH} / ${data.spreadsheet_title}`)
       setLastAutoExportedJobId(selectedJobId)
       setSelectedFaqSpreadsheetTitle(data.spreadsheet_title || spreadsheetTitle)
       setSelectedFaqSpreadsheetId(data.spreadsheet_id || spreadsheetId)
@@ -1100,7 +1188,7 @@ export default function App() {
           )}
         </div>
       </div>
-      {(activeView === 'scrape' || activeView === 'export') && (
+      {(activeView === 'scrape' || activeView === 'export') && (activeView === 'export' ? exportWorkflowMessage : workflowSidebarMessage) && (
         <div className="session-feedback-card">
           <p className="session-feedback-text">{activeView === 'export' ? exportWorkflowMessage : workflowSidebarMessage}</p>
         </div>
@@ -1189,40 +1277,28 @@ export default function App() {
             <div className="main-stack">
               <div className="main-stack-frame">
                 <div className={`scrape-locked-section${isGoogleConnected ? '' : ' is-locked'}`} aria-hidden={!isGoogleConnected}>
-                  <input
-                    ref={configFileInputRef}
-                    type="file"
-                    accept=".csv,text/csv"
-                    className="hidden-file-input"
-                    onChange={importConfigFromComputer}
-                  />
-
                   <div className="workflow-card-grid">
+                    <div className="workflow-stepper" aria-label="Progrés de passos">
+                      {workflowSteps.map((step) => (
+                        <button
+                          key={step.id}
+                          type="button"
+                          className={`workflow-step-pill${scrapeStep === step.id ? ' active' : ''}`}
+                          onClick={() => goToScrapeStep(step.id)}
+                          disabled={!step.enabled}
+                          aria-current={scrapeStep === step.id ? 'step' : undefined}
+                        >
+                          {step.title}
+                        </button>
+                      ))}
+                    </div>
+
+                    {scrapeStep === 1 && (
                         <section className="workflow-card">
-                          <div
-                            className="workflow-card-head workflow-card-toggle"
-                            role="button"
-                            tabIndex={0}
-                            aria-expanded={!configCardCollapsed}
-                            aria-label={configCardCollapsed ? 'Mostrar triar configuració' : 'Amagar triar configuració'}
-                            onClick={() => {
-                              if (configStepActive && !configCardCollapsed) return
-                              setConfigCardCollapsed((current) => !current)
-                            }}
-                            onKeyDown={(event) => {
-                              if (event.key === 'Enter' || event.key === ' ') {
-                                event.preventDefault()
-                                if (configStepActive && !configCardCollapsed) return
-                                setConfigCardCollapsed((current) => !current)
-                              }
-                            }}
-                          >
+                          <div className="workflow-card-head">
                             <h3>Triar configuració</h3>
-                            <span className="logs-toggle-button" aria-hidden="true">
-                              <span className={`logs-toggle-icon${configCardCollapsed ? '' : ' expanded'}`} aria-hidden="true" />
-                            </span>
                           </div>
-                          <div className={`collapsible-region${configCardCollapsed ? ' is-collapsed' : ''}`}>
+                          <div className="collapsible-region">
                             <div className="collapsible-region-inner">
                               <label className="field drive-select-field config-drive-field">
                                 <div className="config-picker-row">
@@ -1230,7 +1306,7 @@ export default function App() {
                                     <span>Carrega una configuració</span>
                                     <span className="inline-help">
                                       <span className="inline-help-trigger" aria-hidden="true">?</span>
-                                      <span className="inline-help-popover">Ruta configuracions per defecte: UPC / FAQs / Configuracions</span>
+                                      <span className="inline-help-popover">Es guarden i es carreguen des de: El meu Drive &gt; UPC &gt; FAQs &gt; Configuracions.</span>
                                     </span>
                                   </span>
                                   <select
@@ -1241,6 +1317,7 @@ export default function App() {
                                         setSelectedConfigFileId('')
                                         setSelectedConfigFileName('')
                                         setConfigSelectionType('none')
+                                        setNewConfigFileName('')
                                         return
                                       }
                                       if (nextId === '__NEW__') {
@@ -1260,40 +1337,35 @@ export default function App() {
                                       <option key={item.id} value={item.id}>{item.name}</option>
                                     ))}
                                   </select>
-                                  <button type="button" className="secondary compact-inline-button" onClick={() => configFileInputRef.current?.click()} disabled={!isGoogleConnected}>
-                                    Importa
-                                  </button>
                                 </div>
                               </label>
+                              {configSelectionType === 'new' && (
+                                <label className="field drive-select-field config-drive-field">
+                                  <div className="config-picker-row">
+                                    <span className="field-with-help config-picker-label">
+                                      <span>Nom de la nova configuració</span>
+                                    </span>
+                                    <input
+                                      type="text"
+                                      value={newConfigFileName}
+                                      onChange={(event) => setNewConfigFileName(event.target.value)}
+                                      placeholder="faq-config-2026-04-27.csv"
+                                      disabled={!isGoogleConnected}
+                                    />
+                                  </div>
+                                </label>
+                              )}
                             </div>
                           </div>
                         </section>
+                    )}
 
-                        <section className={`workflow-card${sheetStepEnabled ? '' : ' is-disabled'}`}>
-                          <div
-                            className="workflow-card-head workflow-card-toggle"
-                            role="button"
-                            tabIndex={0}
-                            aria-expanded={!sheetCardCollapsed}
-                            aria-label={sheetCardCollapsed ? 'Mostrar triar fitxer Sheets' : 'Amagar triar fitxer Sheets'}
-                            onClick={() => {
-                              if (sheetStepActive && !sheetCardCollapsed) return
-                              setSheetCardCollapsed((current) => !current)
-                            }}
-                            onKeyDown={(event) => {
-                              if (event.key === 'Enter' || event.key === ' ') {
-                                event.preventDefault()
-                                if (sheetStepActive && !sheetCardCollapsed) return
-                                setSheetCardCollapsed((current) => !current)
-                              }
-                            }}
-                          >
+                    {scrapeStep === 2 && (
+                        <section className={`workflow-card sheet-selection-card${sheetStepEnabled ? '' : ' is-disabled'}`}>
+                          <div className="workflow-card-head">
                             <h3>Triar fitxer Sheets</h3>
-                            <span className="logs-toggle-button" aria-hidden="true">
-                              <span className={`logs-toggle-icon${sheetCardCollapsed ? '' : ' expanded'}`} aria-hidden="true" />
-                            </span>
                           </div>
-                          <div className={`collapsible-region${sheetCardCollapsed ? ' is-collapsed' : ''}`}>
+                          <div className="collapsible-region">
                             <div className="collapsible-region-inner sheet-choice-stack">
                             <label className="check-row">
                               <input
@@ -1308,7 +1380,7 @@ export default function App() {
                               />
                               <span>Triar Sheet existent del Drive</span>
                             </label>
-                            <label className="field drive-select-field">
+                            <label className="field drive-select-field sheet-child-row">
                               <span className="field-with-help">
                                 <span>Arxius FAQ disponibles</span>
                                 <span className="inline-help">
@@ -1324,7 +1396,6 @@ export default function App() {
                                   setSelectedFaqSpreadsheetId(nextId)
                                   setSelectedFaqSpreadsheetTitle(nextSheet?.name || FIXED_SPREADSHEET_TITLE)
                                   setSheetSelectionMode('existing')
-                                  if (nextId) setShareCardCollapsed(false)
                                 }}
                                 disabled={!sheetStepEnabled || driveListBusy || !availableFaqSheets.length}
                               >
@@ -1354,7 +1425,7 @@ export default function App() {
                               />
                               <span>Crear un Sheet nou</span>
                             </label>
-                            <label className="field">
+                            <label className="field sheet-child-row">
                               <span className="field-with-help">
                                 <span>Nom del nou Google Sheet</span>
                                 <span className="inline-help">
@@ -1368,7 +1439,6 @@ export default function App() {
                                 onChange={(event) => {
                                   setNewSpreadsheetTitle(event.target.value)
                                   setSelectedFaqSpreadsheetTitle(event.target.value)
-                                  if (event.target.value.trim()) setShareCardCollapsed(false)
                                 }}
                                 placeholder={FIXED_SPREADSHEET_TITLE}
                                 disabled={!sheetStepEnabled || sheetSelectionMode !== 'new'}
@@ -1377,47 +1447,14 @@ export default function App() {
                             </div>
                           </div>
                         </section>
+                    )}
 
+                    {scrapeStep === 3 && (
                         <section className={`workflow-card${shareStepEnabled ? '' : ' is-disabled'}`}>
-                          <div
-                            className="workflow-card-head workflow-card-toggle"
-                            role="button"
-                            tabIndex={0}
-                            aria-expanded={!shareCardCollapsed}
-                            aria-label={shareCardCollapsed ? 'Mostrar compartir el fitxer' : 'Amagar compartir el fitxer'}
-                            onClick={() => {
-                              if (shareStepActive && !shareCardCollapsed) return
-                              setShareCardCollapsed((current) => !current)
-                            }}
-                            onKeyDown={(event) => {
-                              if (event.key === 'Enter' || event.key === ' ') {
-                                event.preventDefault()
-                                if (shareStepActive && !shareCardCollapsed) return
-                                setShareCardCollapsed((current) => !current)
-                              }
-                            }}
-                          >
+                          <div className="workflow-card-head">
                             <h3>Vols compartir el fitxer?</h3>
-                            <div className="workflow-head-actions">
-                              <button
-                                type="button"
-                                className="secondary compact-inline-button"
-                                onClick={(event) => {
-                                  event.stopPropagation()
-                                  setShareStepDone(true)
-                                  setShareCardCollapsed(true)
-                                  setDownloaderCardCollapsed(false)
-                                }}
-                                disabled={!shareStepEnabled}
-                              >
-                                Ometre aquest pas
-                              </button>
-                              <span className="logs-toggle-button" aria-hidden="true">
-                                <span className={`logs-toggle-icon${shareCardCollapsed ? '' : ' expanded'}`} aria-hidden="true" />
-                              </span>
-                            </div>
                           </div>
-                          <div className={`collapsible-region${shareCardCollapsed ? ' is-collapsed' : ''}`}>
+                          <div className="collapsible-region">
                             <div className="collapsible-region-inner sheet-share-block">
                             <div className="share-recipient-list">
                               {shareRecipients.map((recipient, index) => (
@@ -1438,43 +1475,20 @@ export default function App() {
                               ))}
                             </div>
                             <div className="share-action-row">
-                              <button
-                                type="button"
-                                className="secondary"
-                                onClick={shareSelectedFaqFile}
-                                disabled={shareBusy || !shareStepEnabled || !selectedFaqSpreadsheetId || sheetSelectionMode !== 'existing'}
-                              >
-                                {shareBusy
-                                  ? 'Compartint...'
-                                  : `Compartir arxiu${selectedFaqSheet?.name || selectedFaqSpreadsheetTitle ? `: ${selectedFaqSheet?.name || selectedFaqSpreadsheetTitle}` : ''}`}
-                              </button>
-                              <button type="button" className="share-add-button" onClick={addShareRecipient} disabled={!shareStepEnabled}>+</button>
+                              
+                              <button type="button" className="share-add-button" onClick={addShareRecipient} disabled={!shareStepEnabled}>Afegir persona</button>
                             </div>
                           </div>
                           </div>
                         </section>
+                    )}
 
+                    {scrapeStep === 4 && (
                         <section className={`workflow-card${downloaderStepEnabled ? '' : ' is-disabled'}`}>
-                          <div
-                            className="workflow-card-head workflow-card-toggle"
-                            role="button"
-                            tabIndex={0}
-                            aria-expanded={!downloaderCardCollapsed}
-                            aria-label={downloaderCardCollapsed ? 'Mostrar descarregador' : 'Amagar descarregador'}
-                            onClick={() => setDownloaderCardCollapsed((current) => !current)}
-                            onKeyDown={(event) => {
-                              if (event.key === 'Enter' || event.key === ' ') {
-                                event.preventDefault()
-                                setDownloaderCardCollapsed((current) => !current)
-                              }
-                            }}
-                          >
+                          <div className="workflow-card-head">
                             <h3>Descarregador</h3>
-                            <span className="logs-toggle-button" aria-hidden="true">
-                              <span className={`logs-toggle-icon${downloaderCardCollapsed ? '' : ' expanded'}`} aria-hidden="true" />
-                            </span>
                           </div>
-                          <div className={`collapsible-region${downloaderCardCollapsed ? ' is-collapsed' : ''}`}>
+                          <div className="collapsible-region">
                             <div className="collapsible-region-inner">
                           <div className="topic-stack">
                             {sources.map((group, index) => (
@@ -1534,9 +1548,13 @@ export default function App() {
                               {isGoogleConnected ? (
                                 <>
                                   <button type="button" onClick={startScrape} disabled={isScrapeBusy || !downloaderStepEnabled}>{isScrapeBusy ? 'Descarregant...' : 'Descarregar FAQs'}</button>
-                                  <button type="button" className="secondary" onClick={saveConfigToDrive} disabled={saveConfigBusy || !googleSession?.connected || !downloaderStepEnabled}>
-                                    {saveConfigBusy ? 'Guardant...' : 'Guardar configuració'}
-                                  </button>
+                                  {configSelectionType !== 'none' && (
+                                    <span className={`autosave-pill ${autosaveStatus}`}>
+                                      {autosaveStatus === 'saving'
+                                        ? 'Autosave: guardant...'
+                                        : (autosaveStatus === 'error' ? 'Autosave: error' : 'Autosave: desat')}
+                                    </span>
+                                  )}
                                   {showScrapeInlineProgress && (
                                     <div className="mini-progress-row">
                                       <div className="mini-progress" aria-live="polite" aria-label={`Descarregant FAQs, ${scrapeInlineProgress}%`}>
@@ -1545,7 +1563,6 @@ export default function App() {
                                         </div>
                                         <strong>{`${scrapeInlineProgress}%`}</strong>
                                       </div>
-                                      {scrapeInlineProgress >= 100 && <span className="progress-complete-label">Completat</span>}
                                     </div>
                                   )}
                                 </>
@@ -1554,6 +1571,11 @@ export default function App() {
                               )}
                             </div>
                           </div>
+                          {showDownloadSuccessBanner && (
+                            <div className="download-success-banner" role="status" aria-live="polite">
+                              {`${completedFaqCount} FAQs descarregades a ${exportedSpreadsheetLabel}, s'ha desat aquesta configuracio a ${savedConfigLabel}.`}
+                            </div>
+                          )}
                           {isGoogleConnected && downloaderStepEnabled && (
                             <div
                               className="logs-collapsible-card"
@@ -1579,15 +1601,6 @@ export default function App() {
                               </div>
                               <div className={`collapsible-region${logsCollapsed ? ' is-collapsed' : ''}`}>
                                 <div className="collapsible-region-inner">
-                                  {jobResult && (
-                                    <div className="summary-grid">
-                                      <div>URLs processades: {jobResult.stats?.total_urls ?? 0}</div>
-                                      <div>FAQs trobades: {jobResult.stats?.total_faqs ?? 0}</div>
-                                      <div>Files generades: {jobResult.stats?.total_rows ?? 0}</div>
-                                      <div>Errors: {jobResult.stats?.total_errors ?? 0}</div>
-                                    </div>
-                                  )}
-
                                   <pre>{visibleLogs.join('\n') || 'Sense logs encara.'}</pre>
                                 </div>
                               </div>
@@ -1596,6 +1609,26 @@ export default function App() {
                             </div>
                           </div>
                         </section>
+                    )}
+
+                    <div className="workflow-step-actions">
+                      {scrapeStep !== 1 ? (
+                        <button
+                          type="button"
+                          className="secondary"
+                          onClick={() => setScrapeStep((current) => Math.max(1, current - 1))}
+                        >
+                          Pas anterior
+                        </button>
+                      ) : <span aria-hidden="true" />}
+                      <button
+                        type="button"
+                        onClick={() => setScrapeStep((current) => Math.min(4, current + 1))}
+                        disabled={scrapeStep === 4 || !canGoNextStep}
+                      >
+                        Següent pas
+                      </button>
+                    </div>
                   </div>
                 </div>
               </div>

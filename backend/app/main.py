@@ -686,6 +686,7 @@ def export_job_review_to_sheets(request: Request, job_id: str, payload: SheetsEx
             target_sheet = ensure_fixed_faqs_spreadsheet_oauth(
                 oauth_client_json=payload.oauth_client_json,
                 token_file=_session_token_file(request),
+                spreadsheet_title=payload.spreadsheet_title,
             )
         export_rows_to_google_sheets_oauth(
             rows=rows,
@@ -702,6 +703,7 @@ def export_job_review_to_sheets(request: Request, job_id: str, payload: SheetsEx
     return {
         "job_id": job_id,
         "approved_rows": approved_rows,
+        "spreadsheet_id": target_sheet["spreadsheet_id"],
         "spreadsheet_title": target_sheet["spreadsheet_title"],
         "worksheet_name": target_sheet["worksheet_name"],
     }
