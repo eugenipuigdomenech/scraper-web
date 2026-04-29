@@ -299,6 +299,7 @@ export default function App() {
   const sourcesEditedRef = useRef(false)
   const configLoadRequestIdRef = useRef(0)
   const configLoadAbortRef = useRef(null)
+  const configLoadInProgressRef = useRef(false)
 
   const { valid: validSources, invalid: invalidSources } = useMemo(() => extractUniqueSources(sources), [sources])
   const isGoogleConnected = Boolean(googleSession?.connected)
@@ -590,6 +591,8 @@ export default function App() {
     const cleanFileId = (fileId || '').trim()
     const requestId = configLoadRequestIdRef.current + 1
     configLoadRequestIdRef.current = requestId
+    configLoadInProgressRef.current = true
+    sourcesEditedRef.current = false
     if (configLoadAbortRef.current) {
       configLoadAbortRef.current.abort()
     }
@@ -633,6 +636,7 @@ export default function App() {
       setLoadingConfigFileId('')
       setExportMessage(error instanceof Error ? error.message : 'No s’ha pogut carregar la configuració seleccionada.')
     } finally {
+      configLoadInProgressRef.current = false
       if (configLoadAbortRef.current === abortController) {
         configLoadAbortRef.current = null
       }
@@ -922,6 +926,7 @@ export default function App() {
       return
     }
 
+    if (configLoadInProgressRef.current) return
     if (!sourcesEditedRef.current) return
 
     const autosaveKey = `${fileName}\n${buildConfigCsvText()}`
