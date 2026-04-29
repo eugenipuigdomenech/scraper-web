@@ -267,6 +267,12 @@ export default function App() {
   const [processMessage, setProcessMessage] = useState('')
   const [processError, setProcessError] = useState('')
   const [exportMessage, setExportMessage] = useState('')
+  const [genwebUrl, setGenwebUrl] = useState('')
+  const [genwebUsername, setGenwebUsername] = useState('')
+  const [genwebPassword, setGenwebPassword] = useState('')
+  const [genwebPublishBusy, setGenwebPublishBusy] = useState(false)
+  const [genwebPublishMessage, setGenwebPublishMessage] = useState('')
+  const [genwebPublishError, setGenwebPublishError] = useState('')
 
   const [submitting, setSubmitting] = useState(false)
   const [downloadBusy, setDownloadBusy] = useState(false)
@@ -279,13 +285,14 @@ export default function App() {
   const [generatorSubtopics, setGeneratorSubtopics] = useState(0)
   const [exportStep, setExportStep] = useState(1)
   const [scrapeVisualProgress, setScrapeVisualProgress] = useState(0)
-  const [copyFeedbackVisible, setCopyFeedbackVisible] = useState(false)
   const [logsCollapsed, setLogsCollapsed] = useState(false)
   const [googleBusy, setGoogleBusy] = useState(false)
   const [lastAutoExportedJobId, setLastAutoExportedJobId] = useState('')
   const [scrapeStep, setScrapeStep] = useState(1)
   const [hasUnlockedStepFlow, setHasUnlockedStepFlow] = useState(false)
   const [autosaveStatus, setAutosaveStatus] = useState('idle')
+  const [loadedConfigSummaryFileId, setLoadedConfigSummaryFileId] = useState('')
+  const [loadingConfigFileId, setLoadingConfigFileId] = useState('')
   const autosaveTimerRef = useRef(null)
   const autosaveInitializedRef = useRef(false)
   const lastAutosaveKeyRef = useRef('')
@@ -316,6 +323,7 @@ export default function App() {
       : scrapeStep === 3)
   const exportStep1Enabled = isGoogleConnected
   const exportStep2Enabled = isGoogleConnected && Boolean(selectedFaqSpreadsheetId)
+  const exportStep3Enabled = exportStep2Enabled && Boolean(lastGeneratedCode.trim())
   const canGoNextExportStep = exportStep2Enabled
   const workflowSteps = [
     { id: 1, title: 'Pas 1: Configuració', enabled: true },
@@ -350,9 +358,31 @@ export default function App() {
     [availableConfigFiles, selectedConfigFileId],
   )
   const completedFaqCount = jobResult?.stats?.total_faqs ?? 0
+  const loadedConfigTopicsCount = useMemo(
+    () => sources.filter((group) => {
+      const hasTopic = (group.topic || '').trim() !== ''
+      const hasAnyUrl = Array.isArray(group.urls) && group.urls.some((url) => (url.value || '').trim() !== '')
+      return hasTopic || hasAnyUrl
+    }).length,
+    [sources],
+  )
+  const loadedConfigUrlsCount = useMemo(
+    () => sources.reduce((acc, group) => acc + (Array.isArray(group.urls) ? group.urls.filter((url) => (url.value || '').trim() !== '').length : 0), 0),
+    [sources],
+  )
   const exportedSpreadsheetLabel = selectedFaqSheet?.name || selectedFaqSpreadsheetTitle || FIXED_SPREADSHEET_TITLE
   const savedConfigLabel = currentConfigFile?.name || selectedConfigFileName || newConfigFileName || 'configuracio actual'
   const showDownloadSuccessBanner = isGoogleConnected && downloaderStepEnabled && scrapeVisualProgress >= 100 && Boolean(jobResult)
+  const urlsWithoutFaqs = useMemo(() => {
+    const blocks = Array.isArray(jobResult?.blocks) ? jobResult.blocks : []
+    return blocks
+      .filter((block) => (Array.isArray(block?.items) ? block.items.length === 0 : true))
+      .map((block) => (block?.source_url || '').trim())
+      .filter(Boolean)
+  }, [jobResult])
+  const hasNoFaqsAnywhere = Boolean(jobResult) && scrapeVisualProgress >= 100 && completedFaqCount === 0
+  const hasPartialNoFaqs = Boolean(jobResult) && scrapeVisualProgress >= 100 && completedFaqCount > 0 && urlsWithoutFaqs.length > 0
+  const hasInvalidUrlsInForm = invalidSources.length > 0
 
   async function apiFetch(url, options = {}) {
     const googleSessionId = getGoogleSessionId()
@@ -549,6 +579,7 @@ export default function App() {
     setSelectedConfigFileName('')
     setConfigSelectionType('new')
     setNewConfigFileName('')
+    setLoadedConfigSummaryFileId('')
     sourcesEditedRef.current = false
     autosaveInitializedRef.current = false
     lastAutosaveKeyRef.current = ''
@@ -570,6 +601,7 @@ export default function App() {
       setSelectedConfigFileName('')
       setConfigSelectionType('none')
       setNewConfigFileName('')
+      setLoadedConfigSummaryFileId('')
       return
     }
 
@@ -577,6 +609,8 @@ export default function App() {
     setSelectedConfigFileName(fileName || '')
     setConfigSelectionType('drive')
     setNewConfigFileName('')
+    setLoadedConfigSummaryFileId('')
+    setLoadingConfigFileId(cleanFileId)
 
     try {
       const params = new URLSearchParams({ file_id: cleanFileId })
@@ -588,11 +622,15 @@ export default function App() {
       if (requestId !== configLoadRequestIdRef.current) return
       const importedRows = parseConfigCsv(data?.content || '')
       applyImportedConfigRows(importedRows, fileName || 'Drive')
+      setLoadedConfigSummaryFileId(cleanFileId)
+      setLoadingConfigFileId('')
       autosaveInitializedRef.current = false
       lastAutosaveKeyRef.current = ''
     } catch (error) {
       if (abortController.signal.aborted) return
       if (requestId !== configLoadRequestIdRef.current) return
+      setLoadedConfigSummaryFileId('')
+      setLoadingConfigFileId('')
       setExportMessage(error instanceof Error ? error.message : 'No s’ha pogut carregar la configuració seleccionada.')
     } finally {
       if (configLoadAbortRef.current === abortController) {
@@ -817,9 +855,15 @@ export default function App() {
 
   function resolveConfigFileName() {
     const stamp = new Date().toISOString().slice(0, 10)
-    const baseName = configSelectionType === 'new'
-      ? newConfigFileName
-      : (currentConfigFile?.name || selectedConfigFileName || `faq-config-${stamp}.csv`)
+    let baseName = ''
+    if (configSelectionType === 'new') {
+      baseName = newConfigFileName
+    } else if (configSelectionType === 'drive') {
+      // En mode "drive" sempre sobreescriu el fitxer seleccionat.
+      baseName = selectedConfigFileName || currentConfigFile?.name || ''
+    } else {
+      baseName = `faq-config-${stamp}.csv`
+    }
     const trimmedName = baseName.trim()
     if (!trimmedName) return ''
     return trimmedName.toLowerCase().endsWith('.csv') ? trimmedName : `${trimmedName}.csv`
@@ -1104,19 +1148,43 @@ export default function App() {
     }
   }
 
-  async function copyGeneratedCode() {
+  async function publishToGenweb() {
+    setGenwebPublishMessage('')
+    setGenwebPublishError('')
+
     if (!lastGeneratedCode.trim()) {
-      setExportMessage('Encara no hi ha cap codi generat.')
+      setGenwebPublishError('Primer has de generar el codi font HTML.')
       return
     }
+    if (!isValidHttpUrl(genwebUrl)) {
+      setGenwebPublishError('La URL de Genweb no es valida.')
+      return
+    }
+    if (!genwebUsername.trim() || !genwebPassword) {
+      setGenwebPublishError('Cal indicar usuari i contrasenya de Genweb.')
+      return
+    }
+
+    setGenwebPublishBusy(true)
     try {
-      await navigator.clipboard.writeText(lastGeneratedCode)
-      setCopyFeedbackVisible(true)
-      window.setTimeout(() => setCopyFeedbackVisible(false), 1800)
-      setExportMessage('Codi HTML copiat al porta-retalls.')
-    } catch {
-      setCopyFeedbackVisible(false)
-      setExportMessage('No s’ha pogut copiar el codi.')
+      const response = await apiFetch(`${API_BASE}/api/genweb/publish`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          target_url: genwebUrl.trim(),
+          html_text: lastGeneratedCode,
+          username: genwebUsername.trim(),
+          password: genwebPassword,
+        }),
+      })
+      const data = await response.json().catch(() => null)
+      if (!response.ok) throw new Error(data?.detail || `HTTP ${response.status}`)
+      setGenwebPublishMessage(`Contingut publicat correctament a ${data?.api_url || genwebUrl.trim()}.`)
+      setGenwebPassword('')
+    } catch (error) {
+      setGenwebPublishError(error instanceof Error ? error.message : 'No s’ha pogut publicar a Genweb.')
+    } finally {
+      setGenwebPublishBusy(false)
     }
   }
 
@@ -1175,7 +1243,6 @@ export default function App() {
     setGeneratorNoApprovedFaqs(false)
     setGeneratorApprovedRows(0)
     setGeneratorSubtopics(0)
-    setCopyFeedbackVisible(false)
     if (!exportStep1Enabled || !selectedFaqSpreadsheetId) {
       setExportStep(1)
     }
@@ -1380,6 +1447,8 @@ export default function App() {
                                         setSelectedConfigFileName('')
                                         setConfigSelectionType('none')
                                         setNewConfigFileName('')
+                                        setLoadedConfigSummaryFileId('')
+                                        setLoadingConfigFileId('')
                                         return
                                       }
                                       if (nextId === '__NEW__') {
@@ -1416,6 +1485,13 @@ export default function App() {
                                     />
                                   </div>
                                 </label>
+                              )}
+                              {configSelectionType === 'drive' && selectedConfigFileId && (
+                                <div className="config-summary-box" role="status" aria-live="polite">
+                                  {loadingConfigFileId === selectedConfigFileId
+                                    ? 'Carregant URLs...'
+                                    : `Carregades ${loadedConfigUrlsCount} URLs i ${loadedConfigTopicsCount} topics.`}
+                                </div>
                               )}
                             </div>
                           </div>
@@ -1625,6 +1701,21 @@ export default function App() {
                               {`${completedFaqCount} FAQs descarregades a ${exportedSpreadsheetLabel}, s'ha desat aquesta configuracio a ${savedConfigLabel}.`}
                             </div>
                           )}
+                          {hasInvalidUrlsInForm && (
+                            <div className="download-error-banner" role="alert" aria-live="assertive">
+                              {invalidSources.length === 1 ? 'URL no vàlida.' : 'URLs no vàlides.'}
+                            </div>
+                          )}
+                          {hasNoFaqsAnywhere && (
+                            <div className="download-error-banner" role="alert" aria-live="assertive">
+                              No s&apos;han trobat FAQs en aquestes URLs.
+                            </div>
+                          )}
+                          {hasPartialNoFaqs && (
+                            <div className="download-error-banner" role="alert" aria-live="assertive">
+                              {`No s'han trobat FAQs a: ${urlsWithoutFaqs.join(', ')}`}
+                            </div>
+                          )}
                           {isGoogleConnected && downloaderStepEnabled && (
                             <div
                               className="logs-collapsible-card"
@@ -1713,10 +1804,17 @@ export default function App() {
                   <button type="button" className={`workflow-step-pill${exportStep === 2 ? ' active' : ''}`} onClick={() => { if (canGoNextExportStep) setExportStep(2) }} disabled={!exportStep2Enabled}>
                     Pas 2: Generar codi
                   </button>
+                  <button type="button" className={`workflow-step-pill${exportStep === 3 ? ' active' : ''}`} onClick={() => { if (exportStep3Enabled) setExportStep(3) }} disabled={!exportStep3Enabled}>
+                    Pas 3: Penjar a Genweb
+                  </button>
                 </div>
 
-                <article className={`panel export-primary-card${(exportStep === 1 && !exportStep1Enabled) || (exportStep === 2 && !exportStep2Enabled) ? ' is-disabled' : ''}`}>
-                  {exportStep === 1 && <h3>Tria l’arxiu amb les FAQs per convertir</h3>}
+                <article className={`panel export-primary-card${(exportStep === 1 && !exportStep1Enabled) || (exportStep === 2 && !exportStep2Enabled) || (exportStep === 3 && !exportStep3Enabled) ? ' is-disabled' : ''}`}>
+                  <div className="workflow-card-head">
+                    {exportStep === 1 && <h3>Tria l’arxiu amb les FAQs per convertir</h3>}
+                    {exportStep === 2 && <h3>Generador de codi font</h3>}
+                    {exportStep === 3 && <h3>Publicació a Genweb</h3>}
+                  </div>
 
                   {exportStep === 1 ? (
                     <>
@@ -1757,19 +1855,9 @@ export default function App() {
                     <div className="action-stack">
                       {isGoogleConnected ? (
                         <>
-                          <button type="button" onClick={generateHtmlFromExternalSource} disabled={!exportStep2Enabled || generatorBusy || !selectedFaqSpreadsheetId}>{generatorBusy ? 'Generant...' : 'Generar codi font'}</button>
-                          {generatorMissingSheet ? (
+                          {generatorMissingSheet && (
                             <div className="generator-error-box" role="alert">
                               No hi ha cap arxiu Excel amb FAQs.
-                            </div>
-                          ) : (generatorBusy || generatorCompleted) && (
-                            <div className="mini-progress-row">
-                              <div className="mini-progress" aria-live="polite" aria-label={`Generant codi, ${generatorProgress}%`}>
-                                <div className="mini-progress-bar">
-                                  <span style={{ width: `${generatorProgress}%` }} />
-                                </div>
-                                <strong>{`${generatorProgress}%`}</strong>
-                              </div>
                             </div>
                           )}
                         </>
@@ -1781,6 +1869,23 @@ export default function App() {
 
                   {exportStep === 2 && (
                     <div className="export-code-inline">
+                      <div className="export-top-actions">
+                        <div className="export-top-actions-left">
+                          <button type="button" onClick={generateHtmlFromExternalSource} disabled={!exportStep2Enabled || generatorBusy || !selectedFaqSpreadsheetId}>
+                            {generatorBusy ? 'Generant...' : 'Generar'}
+                          </button>
+                          {!generatorMissingSheet && (generatorBusy || generatorCompleted) && (
+                            <div className="mini-progress-row">
+                              <div className="mini-progress" aria-live="polite" aria-label={`Generant codi, ${generatorProgress}%`}>
+                                <div className="mini-progress-bar">
+                                  <span style={{ width: `${generatorProgress}%` }} />
+                                </div>
+                                <strong>{`${generatorProgress}%`}</strong>
+                              </div>
+                            </div>
+                          )}
+                        </div>
+                      </div>
                       {generatorCompleted && (
                         <div className="download-success-banner" role="status" aria-live="polite">
                           {`Generat codi font amb ${generatorApprovedRows} faqs aprobades i ${generatorSubtopics} subtopics.`}
@@ -1792,29 +1897,89 @@ export default function App() {
                         </div>
                       )}
                       <pre className="code-block">{lastGeneratedCode || 'Encara no s’ha generat cap HTML.'}</pre>
-                      <div className="code-hint-row">
-                        {lastGeneratedCode.trim() && (
-                          <>
-                            <button type="button" className="copy-inline-button" onClick={copyGeneratedCode}>
-                              Copia
-                            </button>
-                            {copyFeedbackVisible && <span className="copy-success-indicator" aria-label="Copiat" />}
-                          </>
-                        )}
-                        <p className="muted">Enganxa aquest codi en un bloc HTML de Genweb. El resultat ja ve agrupat i amb el comportament d’acordió.</p>
-                      </div>
+                    </div>
+                  )}
+
+                  {exportStep === 3 && (
+                    <div className="export-code-inline">
+                      <label className="field field-inline">
+                        <span>URL de la pàgina FAQ</span>
+                        <input
+                          type="url"
+                          value={genwebUrl}
+                          onChange={(event) => setGenwebUrl(event.target.value)}
+                        />
+                      </label>
+                      <label className="field field-inline">
+                        <span>Usuari Genweb</span>
+                        <input
+                          type="text"
+                          value={genwebUsername}
+                          onChange={(event) => setGenwebUsername(event.target.value)}
+                        />
+                      </label>
+                      <label className="field field-inline">
+                        <span>Contrasenya Genweb</span>
+                        <input
+                          type="password"
+                          value={genwebPassword}
+                          onChange={(event) => setGenwebPassword(event.target.value)}
+                        />
+                      </label>
+                      {genwebPublishMessage && (
+                        <div className="download-success-banner" role="status" aria-live="polite">
+                          {genwebPublishMessage}
+                        </div>
+                      )}
+                      {genwebPublishError && (
+                        <div className="download-error-banner" role="alert" aria-live="assertive">
+                          {genwebPublishError}
+                        </div>
+                      )}
                     </div>
                   )}
 
                   <div className="workflow-step-actions">
-                    {exportStep !== 1 ? (
-                      <button type="button" className="secondary" onClick={() => setExportStep(1)} disabled={!exportStep1Enabled}>Pas anterior</button>
-                    ) : <span aria-hidden="true" />}
                     {exportStep === 1 ? (
-                      <button type="button" onClick={() => setExportStep(2)} disabled={!canGoNextExportStep}>
+                      <span aria-hidden="true" />
+                    ) : exportStep === 3 ? (
+                      <div className="export-step3-actions">
+                        <div className="export-step3-actions-left">
+                          <button
+                            type="button"
+                            className="secondary"
+                            onClick={() => setExportStep(2)}
+                          >
+                            Pas anterior
+                          </button>
+                          <button type="button" className="secondary" onClick={() => setExportStep(1)} disabled={!exportStep1Enabled}>
+                            Tornar a l&apos;inici
+                          </button>
+                        </div>
+                        <button type="button" onClick={publishToGenweb} disabled={genwebPublishBusy || !lastGeneratedCode.trim()}>
+                          {genwebPublishBusy ? 'Publicant...' : 'Publicar ara'}
+                        </button>
+                      </div>
+                    ) : (
+                      <button
+                        type="button"
+                        className="secondary"
+                        onClick={() => setExportStep((current) => Math.max(1, current - 1))}
+                      >
+                        Pas anterior
+                      </button>
+                    )}
+                    {exportStep === 1 ? (
+                      <button type="button" className="next-step-button" onClick={() => setExportStep(2)} disabled={!canGoNextExportStep}>
                         Següent pas
                       </button>
-                    ) : <span aria-hidden="true" />}
+                    ) : (exportStep === 2 ? (
+                      <button type="button" className="next-step-button" onClick={() => setExportStep(3)} disabled={!exportStep3Enabled}>
+                        Següent pas
+                      </button>
+                    ) : (exportStep === 3 ? (
+                      <span aria-hidden="true" />
+                    ) : <span aria-hidden="true" />))}
                   </div>
                 </article>
               </div>

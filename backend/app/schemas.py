@@ -105,6 +105,18 @@ class SourceHtmlExportResponse(BaseModel):
     html_text: str
 
 
+class GenwebPublishRequest(BaseModel):
+    target_url: str = Field(min_length=1, max_length=2048)
+    html_text: str = Field(min_length=1)
+    username: str = Field(min_length=1, max_length=256)
+    password: str = Field(min_length=1, max_length=512)
+
+
+class GenwebPublishResponse(BaseModel):
+    status: Literal["published"]
+    api_url: str
+
+
 class SheetsExportRequest(BaseModel):
     spreadsheet_title: str = Field(min_length=1)
     spreadsheet_id: str | None = None

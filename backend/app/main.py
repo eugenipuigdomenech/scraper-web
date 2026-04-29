@@ -7,8 +7,10 @@ import secrets
 import tempfile
 import threading
 import time
+from urllib.parse import urlparse, urlunparse
 from pathlib import Path
 import unicodedata
+import requests
 
 from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
@@ -26,6 +28,8 @@ from app.schemas import (
     GoogleConnectResponse,
     GoogleDriveFileContentResponse,
     GoogleDriveListResponse,
+    GenwebPublishRequest,
+    GenwebPublishResponse,
     GoogleFixedFaqsListResponse,
     GoogleSessionResponse,
     GoogleSheetsListResponse,
@@ -300,6 +304,26 @@ def _build_export_from_rows(rows: list[dict[str, str]], input_mode: str) -> dict
         "groups": groups,
         "html_text": html_text,
     }
+
+
+def _build_genweb_api_url(target_url: str) -> str:
+    clean_target = (target_url or "").strip()
+    if not clean_target:
+        raise ValueError("Cal indicar la URL de la pagina FAQ de Genweb.")
+
+    parsed = urlparse(clean_target)
+    if parsed.scheme not in {"http", "https"}:
+        raise ValueError("La URL de Genweb ha de començar per http:// o https://.")
+    if not parsed.netloc:
+        raise ValueError("La URL de Genweb no es valida.")
+
+    current_path = parsed.path.rstrip("/")
+    if current_path.endswith("/++api++"):
+        api_path = current_path
+    else:
+        api_path = f"{current_path}/++api++" if current_path else "/++api++"
+
+    return urlunparse((parsed.scheme, parsed.netloc, api_path, "", "", ""))
 
 
 @app.get("/health")
@@ -647,6 +671,44 @@ async def export_html_from_source(
             Path(temp_path).unlink(missing_ok=True)
 
     return payload
+
+
+@app.post("/api/genweb/publish", response_model=GenwebPublishResponse)
+def publish_html_to_genweb(payload: GenwebPublishRequest):
+    try:
+        api_url = _build_genweb_api_url(payload.target_url)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    patch_payload = {
+        "text": {
+            "content-type": "text/html",
+            "data": payload.html_text,
+            "encoding": "utf-8",
+        }
+    }
+
+    try:
+        response = requests.patch(
+            api_url,
+            auth=(payload.username, payload.password),
+            headers={
+                "Accept": "application/json",
+                "Content-Type": "application/json",
+            },
+            json=patch_payload,
+            timeout=20,
+        )
+    except requests.RequestException as exc:
+        raise HTTPException(status_code=502, detail=f"No s'ha pogut connectar amb Genweb: {exc}") from exc
+
+    if response.status_code in {401, 403}:
+        raise HTTPException(status_code=403, detail="Credencials invalides o sense permisos sobre aquesta pagina de Genweb.")
+    if response.status_code >= 400:
+        detail = response.text.strip() or f"HTTP {response.status_code}"
+        raise HTTPException(status_code=400, detail=f"Error publicant a Genweb ({response.status_code}): {detail}")
+
+    return {"status": "published", "api_url": api_url}
 
 
 @app.get("/api/jobs/{job_id}/export/csv")
