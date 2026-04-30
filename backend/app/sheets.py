@@ -637,6 +637,39 @@ def share_drive_file_with_user_oauth(
     )
 
 
+def get_drive_file_shared_people_info_oauth(*, token_file: str = "token.json", file_id: str) -> dict[str, Any]:
+    creds = _get_oauth_credentials(token_file=token_file)
+    clean_file_id = (file_id or "").strip()
+    if not clean_file_id:
+        raise RuntimeError("Falta l'identificador del fitxer.")
+
+    data = _drive_api_json(
+        method="GET",
+        creds=creds,
+        path=f"files/{clean_file_id}/permissions",
+        params={
+            "fields": "permissions(type,role,emailAddress,displayName)",
+            "supportsAllDrives": "true",
+        },
+    )
+    permissions = data.get("permissions") or []
+    shared_people: list[str] = []
+    for permission in permissions:
+        if (permission.get("type") or "").strip() != "user":
+            continue
+        if (permission.get("role") or "").strip() == "owner":
+            continue
+        display_name = (permission.get("displayName") or "").strip()
+        email = (permission.get("emailAddress") or "").strip()
+        label = f"{display_name} <{email}>" if display_name and email else (email or display_name)
+        if label:
+            shared_people.append(label)
+    return {
+        "shared_people_count": len(shared_people),
+        "shared_people": shared_people,
+    }
+
+
 def ensure_fixed_faqs_spreadsheet_oauth(
     *,
     oauth_client_json: str = "oauth_client.json",

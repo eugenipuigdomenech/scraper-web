@@ -169,6 +169,13 @@ class GoogleWorksheetListResponse(BaseModel):
     worksheets: list[str]
 
 
+class FaqSheetStatsResponse(BaseModel):
+    spreadsheet_id: str
+    worksheet_name: str
+    total_faqs: int
+    approved_faqs: int
+
+
 class GoogleFixedFaqsListResponse(BaseModel):
     folder_path: str
     items: list[GoogleDriveItemResponse]
@@ -202,3 +209,9 @@ class ShareDriveFileResponse(BaseModel):
     email: str
     role: Literal["reader", "writer", "commenter"]
     status: Literal["shared"]
+
+
+class DriveShareCountResponse(BaseModel):
+    file_id: str
+    shared_people_count: int
+    shared_people: list[str]

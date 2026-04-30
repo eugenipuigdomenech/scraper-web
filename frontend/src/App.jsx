@@ -107,67 +107,121 @@ function escapeCsvCell(value) {
 }
 
 function parseConfigCsv(text) {
-  const rows = []
-  let current = ''
-  let row = []
-  let insideQuotes = false
+  const normalizedText = `${text || ''}`.replace(/^\uFEFF/, '').replace(/^ï»¿/, '')
+  const allLines = normalizedText
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter((line) => line !== '')
 
-  for (let index = 0; index < text.length; index += 1) {
-    const char = text[index]
-    const next = text[index + 1]
+  if (!allLines.length) return { rows: [], debug: { totalLines: 0, candidateLines: 0, delimiter: 'unknown', hasHeader: false, parsedRows: 0 } }
 
-    if (char === '"') {
-      if (insideQuotes && next === '"') {
-        current += '"'
-        index += 1
-      } else {
-        insideQuotes = !insideQuotes
+  const firstUsefulLine = allLines.find((line) => !/^sep\s*=/i.test(line)) || allLines[0]
+  const delimiter = firstUsefulLine.includes(';')
+    ? ';'
+    : (firstUsefulLine.includes('\t') ? '\t' : ',')
+
+  const parseCsvLine = (line) => {
+    const cells = []
+    let current = ''
+    let insideQuotes = false
+    for (let index = 0; index < line.length; index += 1) {
+      const char = line[index]
+      const next = line[index + 1]
+      if (char === '"') {
+        if (insideQuotes && next === '"') {
+          current += '"'
+          index += 1
+        } else {
+          insideQuotes = !insideQuotes
+        }
+        continue
       }
-      continue
+      if (char === delimiter && !insideQuotes) {
+        cells.push(current.trim())
+        current = ''
+        continue
+      }
+      current += char
     }
-
-    if (char === ';' && !insideQuotes) {
-      row.push(current)
-      current = ''
-      continue
-    }
-
-    if ((char === '\n' || char === '\r') && !insideQuotes) {
-      if (char === '\r' && next === '\n') index += 1
-      row.push(current)
-      rows.push(row)
-      row = []
-      current = ''
-      continue
-    }
-
-    current += char
+    cells.push(current.trim())
+    return cells
   }
 
-  if (current || row.length > 0) {
-    row.push(current)
-    rows.push(row)
+  const candidateLines = allLines.filter((line) => !/^sep\s*=/i.test(line))
+  if (!candidateLines.length) {
+    return {
+      rows: [],
+      debug: {
+        totalLines: allLines.length,
+        candidateLines: 0,
+        delimiter,
+        hasHeader: false,
+        parsedRows: 0,
+      },
+    }
   }
 
-  if (rows.length === 0) return []
+  const normalizeHeaderCell = (cell) => (
+    `${cell || ''}`
+      .replace(/^\uFEFF/, '')
+      .replace(/^ï»¿/, '')
+      .trim()
+      .toLowerCase()
+  )
+  const header = parseCsvLine(candidateLines[0]).map(normalizeHeaderCell)
+  const topicIndex = header.findIndex((value) => ['topic', 'tema'].includes(value))
+  const urlIndex = header.findIndex((value) => ['url', 'link', 'enllac'].includes(value))
+  const enabledIndex = header.findIndex((value) => ['enabled', 'actiu', 'activa'].includes(value))
+  const hasHeader = topicIndex !== -1 && urlIndex !== -1
 
-  const [header, ...dataRows] = rows
-  const normalizedHeader = header.map((cell) => cell.trim().toLowerCase())
-  const topicIndex = normalizedHeader.indexOf('topic')
-  const urlIndex = normalizedHeader.indexOf('url')
-  const enabledIndex = normalizedHeader.indexOf('enabled')
+  const dataLines = hasHeader ? candidateLines.slice(1) : candidateLines
+  const rows = dataLines.map(parseCsvLine)
 
-  if (topicIndex === -1 || urlIndex === -1 || enabledIndex === -1) {
-    throw new Error('El CSV de configuracio ha de tenir les columnes topic, url i enabled.')
+  if (hasHeader) {
+    const parsedWithHeader = rows
+      .map((cells) => ({
+        topic: (cells[topicIndex] || '').trim(),
+        url: (cells[urlIndex] || '').trim(),
+        enabled: enabledIndex === -1
+          ? true
+          : !['false', '0', 'no', 'off'].includes(((cells[enabledIndex] || '').trim().toLowerCase())),
+      }))
+      .filter((row) => row.topic !== '' || row.url !== '')
+    return {
+      rows: parsedWithHeader,
+      debug: {
+        totalLines: allLines.length,
+        candidateLines: candidateLines.length,
+        delimiter,
+        hasHeader: true,
+        parsedRows: parsedWithHeader.length,
+      },
+    }
   }
 
-  return dataRows
-    .filter((cells) => cells.some((cell) => cell.trim() !== ''))
-    .map((cells) => ({
-      topic: (cells[topicIndex] || '').trim(),
-      url: (cells[urlIndex] || '').trim(),
-      enabled: !['false', '0', 'no', 'off'].includes(((cells[enabledIndex] || '').trim().toLowerCase())),
-    }))
+  // Fallback per fitxers antics sense capçalera: topic a columna 1, url a columna 2.
+  const parsedFallback = rows
+    .map((cells) => {
+      const first = (cells[0] || '').trim()
+      const second = (cells[1] || '').trim()
+      const firstIsUrl = /^https?:\/\//i.test(first)
+      const secondIsUrl = /^https?:\/\//i.test(second)
+      if (firstIsUrl && !secondIsUrl) {
+        return { topic: second, url: first, enabled: true }
+      }
+      return { topic: first, url: second, enabled: true }
+    })
+    .filter((row) => row.topic !== '' || row.url !== '')
+  return {
+    rows: parsedFallback,
+    debug: {
+      totalLines: allLines.length,
+      candidateLines: candidateLines.length,
+      delimiter,
+      hasHeader: false,
+      parsedRows: parsedFallback.length,
+    },
+  }
 }
 
 function getReadableError(error, fallbackMessage) {
@@ -225,6 +279,15 @@ function extractUniqueSources(groups) {
   }
 
   return { valid, invalid }
+}
+
+function hasConfigContent(groups) {
+  if (!Array.isArray(groups)) return false
+  return groups.some((group) => {
+    const topic = (group?.topic || '').trim()
+    const hasUrlValue = Array.isArray(group?.urls) && group.urls.some((url) => (url?.value || '').trim() !== '')
+    return topic !== '' || hasUrlValue
+  })
 }
 
 function getGoogleSessionId() {
@@ -293,6 +356,11 @@ export default function App() {
   const [autosaveStatus, setAutosaveStatus] = useState('idle')
   const [loadedConfigSummaryFileId, setLoadedConfigSummaryFileId] = useState('')
   const [loadingConfigFileId, setLoadingConfigFileId] = useState('')
+  const [loadedConfigStats, setLoadedConfigStats] = useState({ fileId: '', topics: 0, urls: 0 })
+  const [selectedSheetStats, setSelectedSheetStats] = useState({ spreadsheetId: '', totalFaqs: 0, approvedFaqs: 0 })
+  const [loadingSheetStatsId, setLoadingSheetStatsId] = useState('')
+  const [selectedSheetShareInfo, setSelectedSheetShareInfo] = useState({ spreadsheetId: '', sharedPeopleCount: 0, sharedPeople: [] })
+  const [loadingSheetShareId, setLoadingSheetShareId] = useState('')
   const autosaveTimerRef = useRef(null)
   const autosaveInitializedRef = useRef(false)
   const lastAutosaveKeyRef = useRef('')
@@ -531,6 +599,20 @@ export default function App() {
         const data = await response.json().catch(() => null)
         if (!response.ok) throw new Error(data?.detail || `HTTP ${response.status}`)
       }
+      try {
+        const params = new URLSearchParams({ file_id: selectedFaqSpreadsheetId })
+        const countResponse = await apiFetch(`${API_BASE}/api/google/drive/share-count?${params.toString()}`)
+        const countData = await countResponse.json().catch(() => null)
+        if (countResponse.ok) {
+          setSelectedSheetShareInfo({
+            spreadsheetId: selectedFaqSpreadsheetId,
+            sharedPeopleCount: Number(countData?.shared_people_count || 0),
+            sharedPeople: Array.isArray(countData?.shared_people) ? countData.shared_people : [],
+          })
+        }
+      } catch {
+        // Ignore share-count refresh errors; the share itself already succeeded.
+      }
       setExportMessage(`Arxiu ${fileName} compartit amb ${emails.join(', ')}.`)
       return true
     } catch (error) {
@@ -541,9 +623,10 @@ export default function App() {
     }
   }
 
-  function applyImportedConfigRows(importedRows, originLabel) {
+  function applyImportedConfigRows(importedRows, originLabel, fileId = '') {
     if (!importedRows.length) {
       setSources([createEmptySource()])
+      setLoadedConfigStats({ fileId, topics: 0, urls: 0 })
       setExportMessage(`Configuracio carregada des de ${originLabel}. El fitxer esta buit; pots afegir topics i URLs al Pas 4.`)
       return
     }
@@ -569,7 +652,18 @@ export default function App() {
       urls: group.urls.length > 0 ? group.urls : [{ id: crypto.randomUUID(), value: '', enabled: true }],
     }))
 
+    const topicCount = nextSources.filter((group) => {
+      const hasTopic = (group.topic || '').trim() !== ''
+      const hasAnyUrl = Array.isArray(group.urls) && group.urls.some((url) => (url.value || '').trim() !== '')
+      return hasTopic || hasAnyUrl
+    }).length
+    const urlCount = nextSources.reduce(
+      (acc, group) => acc + (Array.isArray(group.urls) ? group.urls.filter((url) => (url.value || '').trim() !== '').length : 0),
+      0,
+    )
+
     setSources(nextSources.length > 0 ? nextSources : [createEmptySource()])
+    setLoadedConfigStats({ fileId, topics: topicCount, urls: urlCount })
     sourcesEditedRef.current = false
     setExportMessage(`Configuracio carregada des de ${originLabel}.`)
   }
@@ -581,6 +675,7 @@ export default function App() {
     setConfigSelectionType('new')
     setNewConfigFileName('')
     setLoadedConfigSummaryFileId('')
+    setLoadedConfigStats({ fileId: '', topics: 0, urls: 0 })
     sourcesEditedRef.current = false
     autosaveInitializedRef.current = false
     lastAutosaveKeyRef.current = ''
@@ -605,6 +700,7 @@ export default function App() {
       setConfigSelectionType('none')
       setNewConfigFileName('')
       setLoadedConfigSummaryFileId('')
+      setLoadedConfigStats({ fileId: '', topics: 0, urls: 0 })
       return
     }
 
@@ -623,8 +719,9 @@ export default function App() {
       const data = await response.json().catch(() => null)
       if (!response.ok) throw new Error(data?.detail || `HTTP ${response.status}`)
       if (requestId !== configLoadRequestIdRef.current) return
-      const importedRows = parseConfigCsv(data?.content || '')
-      applyImportedConfigRows(importedRows, fileName || 'Drive')
+      const parsedConfig = parseConfigCsv(data?.content || '')
+      const importedRows = parsedConfig.rows
+      applyImportedConfigRows(importedRows, fileName || 'Drive', cleanFileId)
       setLoadedConfigSummaryFileId(cleanFileId)
       setLoadingConfigFileId('')
       autosaveInitializedRef.current = false
@@ -634,6 +731,7 @@ export default function App() {
       if (requestId !== configLoadRequestIdRef.current) return
       setLoadedConfigSummaryFileId('')
       setLoadingConfigFileId('')
+      setLoadedConfigStats({ fileId: '', topics: 0, urls: 0 })
       setExportMessage(error instanceof Error ? error.message : 'No s’ha pogut carregar la configuració seleccionada.')
     } finally {
       configLoadInProgressRef.current = false
@@ -668,13 +766,93 @@ export default function App() {
       setSelectedConfigFileName('')
       setConfigSelectionType('none')
       setNewConfigFileName('')
+      setLoadedConfigStats({ fileId: '', topics: 0, urls: 0 })
       setSheetSelectionMode('')
       setNewSpreadsheetTitle('')
       setHasUnlockedStepFlow(false)
+      setSelectedSheetStats({ spreadsheetId: '', totalFaqs: 0, approvedFaqs: 0 })
+      setLoadingSheetStatsId('')
+      setSelectedSheetShareInfo({ spreadsheetId: '', sharedPeopleCount: 0, sharedPeople: [] })
+      setLoadingSheetShareId('')
       return
     }
     loadFaqSheets().catch(() => {})
   }, [googleSession?.connected])
+
+  useEffect(() => {
+    const cleanSpreadsheetId = (selectedFaqSpreadsheetId || '').trim()
+    if (!isGoogleConnected || !cleanSpreadsheetId || sheetSelectionMode === 'new') {
+      setSelectedSheetStats({ spreadsheetId: '', totalFaqs: 0, approvedFaqs: 0 })
+      setLoadingSheetStatsId('')
+      return
+    }
+
+    let cancelled = false
+    const loadStats = async () => {
+      setLoadingSheetStatsId(cleanSpreadsheetId)
+      try {
+        const params = new URLSearchParams({
+          spreadsheet_id: cleanSpreadsheetId,
+          worksheet_name: FIXED_WORKSHEET_NAME,
+        })
+        const response = await apiFetch(`${API_BASE}/api/google/faqs/spreadsheet-stats?${params.toString()}`)
+        const data = await response.json().catch(() => null)
+        if (!response.ok) throw new Error(data?.detail || `HTTP ${response.status}`)
+        if (cancelled) return
+        setSelectedSheetStats({
+          spreadsheetId: cleanSpreadsheetId,
+          totalFaqs: Number(data?.total_faqs || 0),
+          approvedFaqs: Number(data?.approved_faqs || 0),
+        })
+      } catch {
+        if (cancelled) return
+        setSelectedSheetStats({ spreadsheetId: cleanSpreadsheetId, totalFaqs: 0, approvedFaqs: 0 })
+      } finally {
+        if (!cancelled) setLoadingSheetStatsId('')
+      }
+    }
+
+    loadStats().catch(() => {})
+    return () => {
+      cancelled = true
+    }
+  }, [isGoogleConnected, selectedFaqSpreadsheetId, sheetSelectionMode])
+
+  useEffect(() => {
+    const cleanSpreadsheetId = (selectedFaqSpreadsheetId || '').trim()
+    if (!isGoogleConnected || !cleanSpreadsheetId || sheetSelectionMode === 'new') {
+      setSelectedSheetShareInfo({ spreadsheetId: '', sharedPeopleCount: 0 })
+      setLoadingSheetShareId('')
+      return
+    }
+
+    let cancelled = false
+    const loadShareInfo = async () => {
+      setLoadingSheetShareId(cleanSpreadsheetId)
+      try {
+        const params = new URLSearchParams({ file_id: cleanSpreadsheetId })
+        const response = await apiFetch(`${API_BASE}/api/google/drive/share-count?${params.toString()}`)
+        const data = await response.json().catch(() => null)
+        if (!response.ok) throw new Error(data?.detail || `HTTP ${response.status}`)
+        if (cancelled) return
+        setSelectedSheetShareInfo({
+          spreadsheetId: cleanSpreadsheetId,
+          sharedPeopleCount: Number(data?.shared_people_count || 0),
+          sharedPeople: Array.isArray(data?.shared_people) ? data.shared_people : [],
+        })
+      } catch {
+        if (cancelled) return
+        setSelectedSheetShareInfo({ spreadsheetId: cleanSpreadsheetId, sharedPeopleCount: 0, sharedPeople: [] })
+      } finally {
+        if (!cancelled) setLoadingSheetShareId('')
+      }
+    }
+
+    loadShareInfo().catch(() => {})
+    return () => {
+      cancelled = true
+    }
+  }, [isGoogleConnected, selectedFaqSpreadsheetId, sheetSelectionMode])
 
   useEffect(() => {
     if (scrapeStep === 4) setHasUnlockedStepFlow(true)
@@ -686,7 +864,66 @@ export default function App() {
     if (nextStep === 2 && !step2Enabled) return
     if (nextStep === 3 && !step3Enabled) return
     if (nextStep === 4 && !step4Enabled) return
+    if (nextStep === 1) {
+      setSheetSelectionMode('')
+      setSelectedFaqSpreadsheetId('')
+      setSelectedFaqSpreadsheetTitle(FIXED_SPREADSHEET_TITLE)
+      setNewSpreadsheetTitle('')
+      setSelectedSheetStats({ spreadsheetId: '', totalFaqs: 0, approvedFaqs: 0 })
+      setLoadingSheetStatsId('')
+      setSelectedSheetShareInfo({ spreadsheetId: '', sharedPeopleCount: 0, sharedPeople: [] })
+      setLoadingSheetShareId('')
+    }
     setScrapeStep(nextStep)
+  }
+
+  function resetScrapeWorkflow() {
+    if (configLoadAbortRef.current) {
+      configLoadAbortRef.current.abort()
+      configLoadAbortRef.current = null
+    }
+    configLoadInProgressRef.current = false
+    configLoadRequestIdRef.current += 1
+
+    if (autosaveTimerRef.current) {
+      window.clearTimeout(autosaveTimerRef.current)
+      autosaveTimerRef.current = null
+    }
+    autosaveInitializedRef.current = false
+    lastAutosaveKeyRef.current = ''
+    sourcesEditedRef.current = false
+
+    setSources([createEmptySource()])
+    setSelectedConfigFileId('')
+    setSelectedConfigFileName('')
+    setConfigSelectionType('none')
+    setLoadedConfigSummaryFileId('')
+    setLoadingConfigFileId('')
+    setLoadedConfigStats({ fileId: '', topics: 0, urls: 0 })
+    setNewConfigFileName('')
+
+    setSheetSelectionMode('')
+    setSelectedFaqSpreadsheetId('')
+    setSelectedFaqSpreadsheetTitle(FIXED_SPREADSHEET_TITLE)
+    setNewSpreadsheetTitle('')
+
+    setShareRecipients([createShareRecipient(DEFAULT_SHARE_EMAIL)])
+    setShareBusy(false)
+    setAutosaveStatus('idle')
+    setHasUnlockedStepFlow(false)
+
+    setActivityLogs([])
+    setJobResult(null)
+    setSelectedJob(null)
+    setSelectedJobId('')
+    setScrapeVisualProgress(0)
+    setLogsCollapsed(false)
+    setLastAutoExportedJobId('')
+
+    setProcessMessage('')
+    setProcessError('')
+    setExportMessage('')
+    setScrapeStep(1)
   }
 
   useEffect(() => {
@@ -928,6 +1165,10 @@ export default function App() {
 
     if (configLoadInProgressRef.current) return
     if (!sourcesEditedRef.current) return
+    if (!hasConfigContent(sources)) {
+      setAutosaveStatus('idle')
+      return
+    }
 
     const autosaveKey = `${fileName}\n${buildConfigCsvText()}`
     if (!autosaveInitializedRef.current) {
@@ -1184,7 +1425,7 @@ export default function App() {
       })
       const data = await response.json().catch(() => null)
       if (!response.ok) throw new Error(data?.detail || `HTTP ${response.status}`)
-      setGenwebPublishMessage(`Contingut publicat correctament a ${data?.api_url || genwebUrl.trim()}.`)
+      setGenwebPublishMessage(`Contingut publicat correctament a ${genwebUrl.trim()}.`)
       setGenwebPassword('')
     } catch (error) {
       setGenwebPublishError(error instanceof Error ? error.message : 'No s’ha pogut publicar a Genweb.')
@@ -1369,10 +1610,6 @@ export default function App() {
           </aside>
         </section>
 
-        {processError && <p className="feedback error">{processError}</p>}
-        {processMessage && <p className="feedback success">{processMessage}</p>}
-        
-
         {activeView === 'home' && (
           <section className="content-grid home-layout">
             <aside className="panel side-panel">
@@ -1454,6 +1691,7 @@ export default function App() {
                                         setNewConfigFileName('')
                                         setLoadedConfigSummaryFileId('')
                                         setLoadingConfigFileId('')
+                                        setLoadedConfigStats({ fileId: '', topics: 0, urls: 0 })
                                         return
                                       }
                                       if (nextId === '__NEW__') {
@@ -1495,7 +1733,11 @@ export default function App() {
                                 <div className="config-summary-box" role="status" aria-live="polite">
                                   {loadingConfigFileId === selectedConfigFileId
                                     ? 'Carregant URLs...'
-                                    : `Carregades ${loadedConfigUrlsCount} URLs i ${loadedConfigTopicsCount} topics.`}
+                                    : `Carregades ${
+                                      loadedConfigStats.fileId === selectedConfigFileId ? loadedConfigStats.urls : loadedConfigUrlsCount
+                                    } URLs i ${
+                                      loadedConfigStats.fileId === selectedConfigFileId ? loadedConfigStats.topics : loadedConfigTopicsCount
+                                    } topics.`}
                                 </div>
                               )}
                             </div>
@@ -1574,41 +1816,64 @@ export default function App() {
                                   </div>
                                 </label>
                               )}
+                              {sheetSelectionMode === 'existing' && selectedFaqSpreadsheetId && (
+                                <div className="config-summary-box" role="status" aria-live="polite">
+                                  {loadingSheetStatsId === selectedFaqSpreadsheetId
+                                    ? 'Carregant FAQs...'
+                                    : `${selectedSheetStats.spreadsheetId === selectedFaqSpreadsheetId ? selectedSheetStats.totalFaqs : 0} FAQs trobades ja disponibles en aquest arxiu.`}
+                                </div>
+                              )}
                             </div>
                           </div>
                         </section>
                     )}
 
                     {scrapeStep === 3 && (
-                        <section className={`workflow-card${shareStepEnabled ? '' : ' is-disabled'}`}>
+                        <section className={`workflow-card share-step-card${shareStepEnabled ? '' : ' is-disabled'}`}>
                           <div className="workflow-card-head">
                             <h3>Vols compartir el fitxer?</h3>
                           </div>
                           <div className="collapsible-region">
-                            <div className="collapsible-region-inner sheet-share-block">
-                            <div className="share-recipient-list">
-                              {shareRecipients.map((recipient, index) => (
-                                <div key={recipient.id} className="share-recipient-row">
-                                  <input
-                                    type="email"
-                                    value={recipient.value}
-                                    onChange={(event) => updateShareRecipient(recipient.id, event.target.value)}
-                                    placeholder={index === 0 ? 'nom.cognom@upc.edu' : 'altra.persona@upc.edu'}
-                                    disabled={!shareStepEnabled}
-                                  />
-                                  {shareRecipients.length > 1 && (
-                                    <button type="button" className="ghost compact-ghost" onClick={() => removeShareRecipient(recipient.id)} disabled={!shareStepEnabled}>
-                                      -
-                                    </button>
-                                  )}
+                            <div className="collapsible-region-inner">
+                              <div className="sheet-share-block">
+                                <div className="share-recipient-list">
+                                  {shareRecipients.map((recipient, index) => (
+                                    <div key={recipient.id} className="share-recipient-row">
+                                      <input
+                                        type="email"
+                                        value={recipient.value}
+                                        onChange={(event) => updateShareRecipient(recipient.id, event.target.value)}
+                                        placeholder={`Correu ${index + 1}`}
+                                        disabled={!shareStepEnabled}
+                                      />
+                                      {shareRecipients.length > 1 && (
+                                        <button type="button" className="ghost compact-ghost" onClick={() => removeShareRecipient(recipient.id)} disabled={!shareStepEnabled}>
+                                          -
+                                        </button>
+                                      )}
+                                    </div>
+                                  ))}
                                 </div>
-                              ))}
+                                <div className="share-action-row">
+                                  <button type="button" className="share-add-button" onClick={addShareRecipient} disabled={!shareStepEnabled}>Afegir persona</button>
+                                </div>
+                              </div>
+                              {selectedFaqSpreadsheetId && (
+                                <div className="config-summary-box share-summary-box" role="status" aria-live="polite">
+                                  {loadingSheetShareId === selectedFaqSpreadsheetId
+                                    ? 'Comprovant comparticions...'
+                                    : (() => {
+                                        const isCurrent = selectedSheetShareInfo.spreadsheetId === selectedFaqSpreadsheetId
+                                        const peopleCount = isCurrent ? selectedSheetShareInfo.sharedPeopleCount : 0
+                                        const peopleLabel = peopleCount === 1 ? 'persona' : 'persones'
+                                        const names = isCurrent && selectedSheetShareInfo.sharedPeople.length
+                                          ? ` ${selectedSheetShareInfo.sharedPeople.join(', ')}.`
+                                          : ''
+                                        return `Actualment l'arxiu esta sent compartit amb ${names}`
+                                      })()}
+                                </div>
+                              )}
                             </div>
-                            <div className="share-action-row">
-                              
-                              <button type="button" className="share-add-button" onClick={addShareRecipient} disabled={!shareStepEnabled}>Afegir persona</button>
-                            </div>
-                          </div>
                           </div>
                         </section>
                     )}
@@ -1624,16 +1889,15 @@ export default function App() {
                             {sources.map((group, index) => (
                               <section key={group.id} className="topic-card">
                                 <div className="topic-head">
-                                  <label className="field grow">
-                                    <span>Topic</span>
+                                  <div className="topic-main-row">
+                                    <span className="row-key">Topic</span>
                                     <input
                                       type="text"
                                       value={group.topic}
                                       onChange={(event) => updateTopic(group.id, 'topic', event.target.value)}
-                                      placeholder={`Topic ${index + 1}`}
                                       disabled={!downloaderStepEnabled}
                                     />
-                                  </label>
+                                  </div>
                                   <div className="inline-action-group">
                                     <button type="button" className="secondary inline-soft-action plus-action" onClick={addTopic} aria-label="Afegir topic" title="Afegir topic" disabled={!downloaderStepEnabled}>+</button>
                                     {sources.length > 1 && (
@@ -1644,6 +1908,13 @@ export default function App() {
 
                                 {group.urls.map((url, urlIndex) => (
                                   <div key={url.id} className="url-row">
+                                    <span className="row-key">URL</span>
+                                    <input
+                                      type="url"
+                                      value={url.value}
+                                      onChange={(event) => updateTopic(group.id, url.id, { value: event.target.value })}
+                                      disabled={!downloaderStepEnabled}
+                                    />
                                     <label className="url-toggle">
                                       <input
                                         type="checkbox"
@@ -1653,13 +1924,6 @@ export default function App() {
                                       />
                                       <span>{url.enabled !== false ? 'Activa' : 'Pausada'}</span>
                                     </label>
-                                    <input
-                                      type="url"
-                                      value={url.value}
-                                      onChange={(event) => updateTopic(group.id, url.id, { value: event.target.value })}
-                                      placeholder="https://web.upc.edu/pagina-faq"
-                                      disabled={!downloaderStepEnabled}
-                                    />
                                     <div className="inline-action-group">
                                       {urlIndex === group.urls.length - 1 && (
                                         <button type="button" className="secondary inline-soft-action plus-action" onClick={() => addUrl(group.id)} aria-label="Afegir URL" title="Afegir URL" disabled={!downloaderStepEnabled}>+</button>
@@ -1761,23 +2025,17 @@ export default function App() {
                         <button
                           type="button"
                           className="secondary"
-                          onClick={() => setScrapeStep((current) => Math.max(1, current - 1))}
+                          onClick={() => goToScrapeStep(scrapeStep - 1)}
                         >
                           Pas anterior
                         </button>
                       ) : <span aria-hidden="true" />}
                       <button
                         type="button"
+                        className="next-step-button"
                         onClick={() => {
                           if (scrapeStep === 4) {
-                            setActivityLogs([])
-                            setJobResult(null)
-                            setSelectedJob(null)
-                            setSelectedJobId('')
-                            setScrapeVisualProgress(0)
-                            setLogsCollapsed(false)
-                            setLastAutoExportedJobId('')
-                            setScrapeStep(1)
+                            resetScrapeWorkflow()
                             return
                           }
                           setScrapeStep((current) => Math.min(4, current + 1))
@@ -1819,6 +2077,27 @@ export default function App() {
                     {exportStep === 1 && <h3>Tria l’arxiu amb les FAQs per convertir</h3>}
                     {exportStep === 2 && <h3>Generador de codi font</h3>}
                     {exportStep === 3 && <h3>Publicació a Genweb</h3>}
+                    {exportStep === 2 && (
+                      <div className="generator-head-actions">
+                        {!generatorMissingSheet && (generatorBusy || generatorCompleted) && (
+                          <div className="mini-progress-row">
+                            <div className="mini-progress" aria-live="polite" aria-label={`Generant codi, ${generatorProgress}%`}>
+                              <div className="mini-progress-bar">
+                                <span style={{ width: `${generatorProgress}%` }} />
+                              </div>
+                              <strong>{`${generatorProgress}%`}</strong>
+                            </div>
+                          </div>
+                        )}
+                        {generatorCompleted ? (
+                          <span className="generate-done-pill" role="status" aria-live="polite">✓ Generat</span>
+                        ) : (
+                          <button type="button" className="generate-action-button" onClick={generateHtmlFromExternalSource} disabled={!exportStep2Enabled || generatorBusy || !selectedFaqSpreadsheetId}>
+                            {generatorBusy ? 'Generant...' : 'Generar'}
+                          </button>
+                        )}
+                      </div>
+                    )}
                   </div>
 
                   {exportStep === 1 ? (
@@ -1855,6 +2134,13 @@ export default function App() {
                           </select>
                         </div>
                       </label>
+                      {selectedFaqSpreadsheetId && (
+                        <div className="config-summary-box" role="status" aria-live="polite">
+                          {loadingSheetStatsId === selectedFaqSpreadsheetId
+                            ? 'Carregant FAQs...'
+                            : `Carregat amb ${selectedSheetStats.spreadsheetId === selectedFaqSpreadsheetId ? selectedSheetStats.totalFaqs : 0} FAQs, de les quals ${selectedSheetStats.spreadsheetId === selectedFaqSpreadsheetId ? selectedSheetStats.approvedFaqs : 0} estan aprovades.`}
+                        </div>
+                      )}
                     </>
                   ) : (
                     <div className="action-stack">
@@ -1874,23 +2160,6 @@ export default function App() {
 
                   {exportStep === 2 && (
                     <div className="export-code-inline">
-                      <div className="export-top-actions">
-                        <div className="export-top-actions-left">
-                          <button type="button" onClick={generateHtmlFromExternalSource} disabled={!exportStep2Enabled || generatorBusy || !selectedFaqSpreadsheetId}>
-                            {generatorBusy ? 'Generant...' : 'Generar'}
-                          </button>
-                          {!generatorMissingSheet && (generatorBusy || generatorCompleted) && (
-                            <div className="mini-progress-row">
-                              <div className="mini-progress" aria-live="polite" aria-label={`Generant codi, ${generatorProgress}%`}>
-                                <div className="mini-progress-bar">
-                                  <span style={{ width: `${generatorProgress}%` }} />
-                                </div>
-                                <strong>{`${generatorProgress}%`}</strong>
-                              </div>
-                            </div>
-                          )}
-                        </div>
-                      </div>
                       {generatorCompleted && (
                         <div className="download-success-banner" role="status" aria-live="polite">
                           {`Generat codi font amb ${generatorApprovedRows} faqs aprobades i ${generatorSubtopics} subtopics.`}
@@ -1944,49 +2213,50 @@ export default function App() {
                     </div>
                   )}
 
+                </article>
+                {exportStep === 1 && (
                   <div className="workflow-step-actions">
-                    {exportStep === 1 ? (
-                      <span aria-hidden="true" />
-                    ) : exportStep === 3 ? (
-                      <div className="export-step3-actions">
-                        <div className="export-step3-actions-left">
-                          <button
-                            type="button"
-                            className="secondary"
-                            onClick={() => setExportStep(2)}
-                          >
-                            Pas anterior
-                          </button>
-                          <button type="button" className="secondary" onClick={() => setExportStep(1)} disabled={!exportStep1Enabled}>
-                            Tornar a l&apos;inici
-                          </button>
-                        </div>
-                        <button type="button" onClick={publishToGenweb} disabled={genwebPublishBusy || !lastGeneratedCode.trim()}>
-                          {genwebPublishBusy ? 'Publicant...' : 'Publicar ara'}
+                    <span aria-hidden="true" />
+                    <button type="button" className="next-step-button" onClick={() => setExportStep(2)} disabled={!canGoNextExportStep}>
+                      Següent pas
+                    </button>
+                  </div>
+                )}
+                {exportStep === 2 && (
+                  <div className="workflow-step-actions">
+                    <button
+                      type="button"
+                      className="secondary"
+                      onClick={() => setExportStep(1)}
+                    >
+                      Pas anterior
+                    </button>
+                    <button type="button" className="next-step-button" onClick={() => setExportStep(3)} disabled={!exportStep3Enabled}>
+                      Següent pas
+                    </button>
+                  </div>
+                )}
+                {exportStep === 3 && (
+                  <div className="workflow-step-actions">
+                    <div className="export-step3-actions">
+                      <div className="export-step3-actions-left">
+                        <button
+                          type="button"
+                          className="secondary"
+                          onClick={() => setExportStep(2)}
+                        >
+                          Pas anterior
+                        </button>
+                        <button type="button" className="secondary" onClick={() => setExportStep(1)} disabled={!exportStep1Enabled}>
+                          Tornar a l&apos;inici
                         </button>
                       </div>
-                    ) : (
-                      <button
-                        type="button"
-                        className="secondary"
-                        onClick={() => setExportStep((current) => Math.max(1, current - 1))}
-                      >
-                        Pas anterior
+                      <button type="button" onClick={publishToGenweb} disabled={genwebPublishBusy || !lastGeneratedCode.trim()}>
+                        {genwebPublishBusy ? 'Publicant...' : 'Publicar ara'}
                       </button>
-                    )}
-                    {exportStep === 1 ? (
-                      <button type="button" className="next-step-button" onClick={() => setExportStep(2)} disabled={!canGoNextExportStep}>
-                        Següent pas
-                      </button>
-                    ) : (exportStep === 2 ? (
-                      <button type="button" className="next-step-button" onClick={() => setExportStep(3)} disabled={!exportStep3Enabled}>
-                        Següent pas
-                      </button>
-                    ) : (exportStep === 3 ? (
-                      <span aria-hidden="true" />
-                    ) : <span aria-hidden="true" />))}
+                    </div>
                   </div>
-                </article>
+                )}
               </div>
             </div>
           </section>

@@ -41,7 +41,7 @@ button {
     box-shadow 0.28s cubic-bezier(0.22, 1, 0.36, 1);
 }
 
-button:not(.secondary):not(.ghost):not(.nav-pill):not(.sheet-pill):not(.header-link):not(.hero-cta):not(.google-session-button):not(.copy-inline-button):hover:not(:disabled) {
+button:not(.secondary):not(.ghost):not(.nav-pill):not(.sheet-pill):not(.header-link):not(.hero-cta):not(.google-session-button):not(.copy-inline-button):not(.workflow-step-pill):hover:not(:disabled) {
   background: var(--upc-blue-deep);
   color: var(--upc-white);
   transform: translateY(-3px) scale(1.01);
@@ -560,19 +560,21 @@ pre {
 
 .google-profile-card {
   display: grid;
-  gap: 0.2rem;
-  margin-top: -0.15rem;
+  gap: 0.45rem;
+  margin-top: 0.15rem;
   justify-items: center;
   text-align: center;
 }
 
 .google-profile-card strong {
   color: #202124;
+  line-height: 1.2;
 }
 
 .google-profile-card span {
   color: #5f6368;
   font-size: 0.92rem;
+  line-height: 1.35;
   overflow-wrap: anywhere;
 }
 
@@ -648,6 +650,7 @@ pre {
   align-items: center;
   justify-content: center;
   gap: 0.5rem;
+  padding-top: 0.2rem;
 }
 
 .google-status-actions {
@@ -655,8 +658,9 @@ pre {
   display: flex;
   align-items: center;
   justify-content: center;
-  gap: 0.6rem;
+  gap: 0.75rem;
   flex-wrap: wrap;
+  margin-top: 0.15rem;
 }
 
 .google-status-row.disconnected {
@@ -820,11 +824,10 @@ pre {
 }
 
 .collapsible-region {
-  max-height: 1200px;
+  max-height: none;
   opacity: 1;
   transform: translateY(0);
   transition:
-    max-height 260ms ease,
     opacity 180ms ease,
     transform 220ms ease;
   overflow: visible;
@@ -876,8 +879,8 @@ pre {
 }
 
 .compact-side-card {
-  gap: 0.55rem;
-  padding: 0.75rem 0.8rem;
+  gap: 0.8rem;
+  padding: 1rem 0.95rem 1.1rem;
 }
 
 .compact-card-head {
@@ -1059,7 +1062,7 @@ pre {
 .export-top-actions {
   display: flex;
   align-items: center;
-  justify-content: space-between;
+  justify-content: flex-end;
   gap: 0.65rem;
   flex-wrap: wrap;
 }
@@ -1069,6 +1072,37 @@ pre {
   align-items: center;
   gap: 0.65rem;
   flex-wrap: wrap;
+  justify-content: flex-end;
+  width: 100%;
+}
+
+button.generate-action-button {
+  background: #edf6fc;
+  color: var(--upc-blue-deep);
+  border: 1px solid #8eb8d5;
+  box-shadow: none;
+}
+
+button.generate-action-button:hover:not(:disabled) {
+  background: #eaf4fb;
+  color: #1f5f8f;
+  border-color: #9fc2db;
+  transform: translateY(-2px) scale(1.01);
+  box-shadow: 0 8px 14px rgba(0, 91, 151, 0.1);
+}
+
+.generate-done-pill {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 2.5rem;
+  padding: 0.5rem 0.95rem;
+  border-radius: 999px;
+  border: 1px solid #92cfac;
+  background: #eaf8f0;
+  color: #1e7d4d;
+  font-weight: 700;
+  white-space: nowrap;
 }
 
 .genweb-action-button {
@@ -1105,9 +1139,12 @@ pre {
   gap: 0.6rem;
 }
 
-.workflow-step-pill {
+button.workflow-step-pill {
   width: auto;
   min-width: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   padding: 0.5rem 0.85rem;
   border-radius: 999px;
   border: 1px solid #bfd4e4;
@@ -1115,19 +1152,31 @@ pre {
   color: var(--upc-blue-dark);
   font-size: 0.82rem;
   font-weight: 700;
-  transition: background 180ms ease, border-color 180ms ease, color 180ms ease;
+  transform: none;
+  box-shadow: none;
+  transition: background-color 180ms ease, border-color 180ms ease, color 180ms ease;
 }
 
-.workflow-step-pill:hover:not(:disabled) {
+button.workflow-step-pill:hover:not(:disabled) {
   background: #e6f0f8;
   border-color: #7fb2dc;
   color: var(--upc-blue-deep);
+  transform: none;
+  box-shadow: none;
 }
 
-.workflow-step-pill.active {
+button.workflow-step-pill.active {
   background: #0f6ab3;
   border-color: #0f6ab3;
   color: #ffffff;
+}
+
+button.workflow-step-pill.active:hover:not(:disabled) {
+  background: #0f6ab3;
+  border-color: #0f6ab3;
+  color: #ffffff;
+  transform: none;
+  box-shadow: none;
 }
 
 .workflow-step-pill:disabled {
@@ -1151,10 +1200,19 @@ pre {
   align-items: center;
   justify-content: space-between;
   gap: 0.6rem;
+  flex-wrap: wrap;
 }
 
 .workflow-card-head h3 {
   margin: 0;
+}
+
+.generator-head-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.65rem;
+  flex-wrap: wrap;
+  justify-content: flex-end;
 }
 
 .workflow-card-toggle {
@@ -1245,6 +1303,12 @@ pre {
   width: 100%;
 }
 
+.workflow-card.share-step-card .share-summary-box {
+  justify-self: start;
+  margin-inline: 0;
+  margin-top: 0.8rem;
+}
+
 .share-action-row > .secondary {
   min-width: 200px;
   max-width: 520px;
@@ -1330,21 +1394,33 @@ pre {
 .workflow-step-actions > button {
   width: auto;
   min-width: 140px;
-}
-
-.next-step-button {
-  background: #f5f9fd;
+  background: var(--upc-white);
   color: var(--upc-blue-dark);
-  border: 1px solid #bfd4e4;
+  border: 1px solid #b9c9d8;
   box-shadow: none;
 }
 
-.next-step-button:hover:not(:disabled) {
-  background: #e6f0f8;
+.workflow-step-actions > button:hover:not(:disabled) {
+  background: #edf6fc;
   color: var(--upc-blue-deep);
   border-color: #8eb8d5;
   transform: translateY(-2px) scale(1.01);
   box-shadow: 0 10px 18px rgba(0, 91, 151, 0.12);
+}
+
+.next-step-button {
+  background: var(--upc-white);
+  color: var(--upc-blue-dark);
+  border: 1px solid #b9c9d8;
+  box-shadow: none;
+}
+
+.next-step-button:hover:not(:disabled) {
+  background: #edf6fc !important;
+  color: var(--upc-blue-deep) !important;
+  border-color: #8eb8d5 !important;
+  transform: translateY(-2px) scale(1.01) !important;
+  box-shadow: 0 10px 18px rgba(0, 91, 151, 0.12) !important;
 }
 
 .field-inline {
@@ -1608,6 +1684,20 @@ pre {
   align-items: end;
 }
 
+.topic-main-row {
+  display: flex;
+  align-items: center;
+  gap: 0.85rem;
+  flex: 1;
+  min-width: 0;
+}
+
+.row-key {
+  min-width: 3.6rem;
+  font-weight: 700;
+  color: var(--upc-blue-deep);
+}
+
 .topic-head .inline-action-group {
   align-self: end;
   margin-bottom: 0.08rem;
@@ -1618,6 +1708,12 @@ pre {
 .progress-shell {
   align-items: center;
   justify-content: space-between;
+}
+
+.topic-main-row input,
+.url-row input {
+  flex: 1;
+  min-width: 0;
 }
 
 .action-inline-group {

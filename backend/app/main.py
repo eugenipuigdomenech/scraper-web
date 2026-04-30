@@ -25,6 +25,8 @@ from app.html_export import (
 )
 from app.job_manager import job_manager
 from app.schemas import (
+    DriveShareCountResponse,
+    FaqSheetStatsResponse,
     GoogleConnectResponse,
     GoogleDriveFileContentResponse,
     GoogleDriveListResponse,
@@ -60,6 +62,7 @@ from app.sheets import (
     exchange_google_authorization_code,
     export_rows_to_google_sheets_oauth,
     get_google_session_status,
+    get_drive_file_shared_people_info_oauth,
     list_drive_items_oauth,
     list_fixed_config_files_oauth,
     list_fixed_faqs_spreadsheets_oauth,
@@ -428,6 +431,47 @@ def google_spreadsheet_worksheets(request: Request, spreadsheet_id: str):
     return {"spreadsheet_id": spreadsheet_id, "worksheets": worksheets}
 
 
+@app.get("/api/google/faqs/spreadsheet-stats", response_model=FaqSheetStatsResponse)
+def google_faq_spreadsheet_stats(request: Request, spreadsheet_id: str, worksheet_name: str = "FAQs"):
+    token_file = _session_token_file(request)
+    clean_spreadsheet_id = (spreadsheet_id or "").strip()
+    clean_worksheet_name = (worksheet_name or "").strip() or "FAQs"
+    if not clean_spreadsheet_id:
+        raise HTTPException(status_code=400, detail="Cal indicar spreadsheet_id.")
+
+    try:
+        rows = read_rows_from_sheets_oauth(
+            token_file=token_file,
+            spreadsheet_title="",
+            worksheet_name=clean_worksheet_name,
+            spreadsheet_id=clean_spreadsheet_id,
+        )
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    normalized_rows = [normalize_row_dict(row) for row in rows]
+    data_rows = [
+        row
+        for row in normalized_rows
+        if any(
+            (row.get(field) or "").strip()
+            for field in ("Tema", "Subtopic", "Pregunta", "Resposta", "Font", "Estat")
+        )
+    ]
+    approved_rows = sum(
+        1
+        for row in data_rows
+        if (row.get("Estat") or "").strip().lower() in {"aprovat", "aprovada", "approved"}
+    )
+
+    return {
+        "spreadsheet_id": clean_spreadsheet_id,
+        "worksheet_name": clean_worksheet_name,
+        "total_faqs": len(data_rows),
+        "approved_faqs": approved_rows,
+    }
+
+
 @app.get("/api/google/faqs/spreadsheets", response_model=GoogleFixedFaqsListResponse)
 def google_fixed_faqs_spreadsheets(request: Request):
     token_file = _session_token_file(request)
@@ -485,6 +529,20 @@ def google_share_file(request: Request, payload: ShareDriveFileRequest):
         "email": payload.email,
         "role": payload.role,
         "status": "shared",
+    }
+
+
+@app.get("/api/google/drive/share-count", response_model=DriveShareCountResponse)
+def google_drive_share_count(request: Request, file_id: str):
+    token_file = _session_token_file(request)
+    try:
+        share_info = get_drive_file_shared_people_info_oauth(token_file=token_file, file_id=file_id)
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return {
+        "file_id": file_id,
+        "shared_people_count": share_info["shared_people_count"],
+        "shared_people": share_info["shared_people"],
     }
 
 
