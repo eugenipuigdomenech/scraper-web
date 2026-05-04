@@ -16,11 +16,19 @@ const FIXED_SPREADSHEET_TITLE = 'FAQs'
 const FIXED_WORKSHEET_NAME = 'FAQs'
 const DEFAULT_SHARE_EMAIL = ''
 
+function createId() {
+  if (typeof globalThis.crypto?.randomUUID === 'function') {
+    return globalThis.crypto.randomUUID()
+  }
+
+  return `id-${Date.now()}-${Math.random().toString(36).slice(2, 11)}`
+}
+
 const defaultSources = [
   {
-    id: crypto.randomUUID(),
+    id: createId(),
     topic: 'Admissions',
-    urls: [{ id: crypto.randomUUID(), value: '', enabled: true }],
+    urls: [{ id: createId(), value: '', enabled: true }],
   },
 ]
 
@@ -39,15 +47,15 @@ const defaultState = {
 
 function createEmptySource() {
   return {
-    id: crypto.randomUUID(),
+    id: createId(),
     topic: '',
-    urls: [{ id: crypto.randomUUID(), value: '', enabled: true }],
+    urls: [{ id: createId(), value: '', enabled: true }],
   }
 }
 
 function createShareRecipient(value = '') {
   return {
-    id: crypto.randomUUID(),
+    id: createId(),
     value,
   }
 }
@@ -58,11 +66,11 @@ function formatConfigDisplayName(name) {
 
 function normalizeUrlRow(row) {
   if (typeof row === 'string') {
-    return { id: crypto.randomUUID(), value: row, enabled: true }
+    return { id: createId(), value: row, enabled: true }
   }
 
   return {
-    id: typeof row?.id === 'string' && row.id ? row.id : crypto.randomUUID(),
+    id: typeof row?.id === 'string' && row.id ? row.id : createId(),
     value: typeof row?.value === 'string' ? row.value : '',
     enabled: row?.enabled !== false,
   }
@@ -72,12 +80,12 @@ function normalizeSources(input) {
   if (!Array.isArray(input) || input.length === 0) return defaultSources
 
   const normalized = input.map((group) => ({
-    id: typeof group?.id === 'string' && group.id ? group.id : crypto.randomUUID(),
+    id: typeof group?.id === 'string' && group.id ? group.id : createId(),
     topic: typeof group?.topic === 'string' ? group.topic : '',
     urls:
       Array.isArray(group?.urls) && group.urls.length > 0
         ? group.urls.map(normalizeUrlRow)
-        : [{ id: crypto.randomUUID(), value: '', enabled: true }],
+        : [{ id: createId(), value: '', enabled: true }],
   }))
 
   return normalized.length > 0 ? normalized : defaultSources
@@ -90,7 +98,7 @@ function normalizeShareRecipients(input) {
 
   const normalized = input
     .map((recipient) => ({
-      id: typeof recipient?.id === 'string' && recipient.id ? recipient.id : crypto.randomUUID(),
+      id: typeof recipient?.id === 'string' && recipient.id ? recipient.id : createId(),
       value: typeof recipient?.value === 'string' ? recipient.value : '',
     }))
     .filter((recipient) => typeof recipient.value === 'string')
@@ -293,7 +301,7 @@ function hasConfigContent(groups) {
 function getGoogleSessionId() {
   let current = window.localStorage.getItem(GOOGLE_SESSION_KEY)
   if (current) return current
-  current = crypto.randomUUID()
+  current = createId()
   window.localStorage.setItem(GOOGLE_SESSION_KEY, current)
   return current
 }
@@ -635,12 +643,12 @@ export default function App() {
     importedRows.forEach(({ topic, url, enabled }) => {
       const key = topic || '__EMPTY_TOPIC__'
       const currentGroup = groupedSources.get(key) || {
-        id: crypto.randomUUID(),
+        id: createId(),
         topic,
         urls: [],
       }
       currentGroup.urls.push({
-        id: crypto.randomUUID(),
+        id: createId(),
         value: url,
         enabled,
       })
@@ -649,7 +657,7 @@ export default function App() {
 
     const nextSources = Array.from(groupedSources.values()).map((group) => ({
       ...group,
-      urls: group.urls.length > 0 ? group.urls : [{ id: crypto.randomUUID(), value: '', enabled: true }],
+      urls: group.urls.length > 0 ? group.urls : [{ id: createId(), value: '', enabled: true }],
     }))
 
     const topicCount = nextSources.filter((group) => {
@@ -1054,7 +1062,7 @@ export default function App() {
     setSources((current) =>
       current.map((group) =>
         group.id === topicId
-          ? { ...group, urls: [...group.urls, { id: crypto.randomUUID(), value: '', enabled: true }] }
+          ? { ...group, urls: [...group.urls, { id: createId(), value: '', enabled: true }] }
           : group,
       ),
     )
