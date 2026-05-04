@@ -376,6 +376,7 @@ export default function App() {
   const configLoadRequestIdRef = useRef(0)
   const configLoadAbortRef = useRef(null)
   const configLoadInProgressRef = useRef(false)
+  const sheetStepInitializedRef = useRef(false)
 
   const { valid: validSources, invalid: invalidSources } = useMemo(() => extractUniqueSources(sources), [sources])
   const isGoogleConnected = Boolean(googleSession?.connected)
@@ -559,13 +560,15 @@ export default function App() {
         setSelectedFaqSpreadsheetTitle(FIXED_SPREADSHEET_TITLE)
       } else {
         const currentSelection = faqItems.find((item) => item.id === selectedFaqSpreadsheetId)
-        const preferredSelection = currentSelection
-          || faqItems.find((item) => item.name === selectedFaqSpreadsheetTitle)
-          || faqItems.find((item) => item.name === FIXED_SPREADSHEET_TITLE)
-          || faqItems[0]
-
-        setSelectedFaqSpreadsheetId(preferredSelection.id)
-        setSelectedFaqSpreadsheetTitle(preferredSelection.name)
+        if (currentSelection) {
+          setSelectedFaqSpreadsheetId(currentSelection.id)
+          setSelectedFaqSpreadsheetTitle(currentSelection.name)
+        } else {
+          // No autoseleccionem cap fitxer: el selector ha de quedar al placeholder per defecte.
+          setSelectedFaqSpreadsheetId('')
+          setSelectedFaqSpreadsheetTitle(FIXED_SPREADSHEET_TITLE)
+          setSheetSelectionMode('')
+        }
       }
 
       if (!configItems.length) {
@@ -866,22 +869,21 @@ export default function App() {
     if (scrapeStep === 4) setHasUnlockedStepFlow(true)
   }, [scrapeStep])
 
+  useEffect(() => {
+    if (scrapeStep !== 2 || sheetStepInitializedRef.current) return
+    sheetStepInitializedRef.current = true
+    setSheetSelectionMode('')
+    setSelectedFaqSpreadsheetId('')
+    setSelectedFaqSpreadsheetTitle(FIXED_SPREADSHEET_TITLE)
+    setNewSpreadsheetTitle('')
+  }, [scrapeStep])
+
   function goToScrapeStep(targetStep) {
     if (!Number.isFinite(targetStep)) return
     const nextStep = Math.max(1, Math.min(targetStep, 4))
     if (nextStep === 2 && !step2Enabled) return
     if (nextStep === 3 && !step3Enabled) return
     if (nextStep === 4 && !step4Enabled) return
-    if (nextStep === 1) {
-      setSheetSelectionMode('')
-      setSelectedFaqSpreadsheetId('')
-      setSelectedFaqSpreadsheetTitle(FIXED_SPREADSHEET_TITLE)
-      setNewSpreadsheetTitle('')
-      setSelectedSheetStats({ spreadsheetId: '', totalFaqs: 0, approvedFaqs: 0 })
-      setLoadingSheetStatsId('')
-      setSelectedSheetShareInfo({ spreadsheetId: '', sharedPeopleCount: 0, sharedPeople: [] })
-      setLoadingSheetShareId('')
-    }
     setScrapeStep(nextStep)
   }
 
@@ -914,6 +916,7 @@ export default function App() {
     setSelectedFaqSpreadsheetId('')
     setSelectedFaqSpreadsheetTitle(FIXED_SPREADSHEET_TITLE)
     setNewSpreadsheetTitle('')
+    sheetStepInitializedRef.current = false
 
     setShareRecipients([createShareRecipient(DEFAULT_SHARE_EMAIL)])
     setShareBusy(false)
@@ -1873,11 +1876,13 @@ export default function App() {
                                     : (() => {
                                         const isCurrent = selectedSheetShareInfo.spreadsheetId === selectedFaqSpreadsheetId
                                         const peopleCount = isCurrent ? selectedSheetShareInfo.sharedPeopleCount : 0
-                                        const peopleLabel = peopleCount === 1 ? 'persona' : 'persones'
                                         const names = isCurrent && selectedSheetShareInfo.sharedPeople.length
                                           ? ` ${selectedSheetShareInfo.sharedPeople.join(', ')}.`
                                           : ''
-                                        return `Actualment l'arxiu esta sent compartit amb ${names}`
+                                        if (peopleCount === 0) {
+                                          return "Actualment l'arxiu no s'esta compartint amb ningu."
+                                        }
+                                        return `Actualment l'arxiu esta sent compartit amb${names}`
                                       })()}
                                 </div>
                               )}
