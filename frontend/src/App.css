@@ -1339,11 +1339,61 @@ button.workflow-step-pill.active:hover:not(:disabled) {
 }
 
 .export-primary-card .config-drive-field .config-picker-row {
-  grid-template-columns: auto minmax(260px, 420px);
+  grid-template-columns: minmax(220px, 320px);
 }
 
 .config-picker-label {
   white-space: nowrap;
+}
+
+.export-step1-split {
+  display: grid;
+  grid-template-columns: minmax(360px, 560px) minmax(240px, 300px);
+  justify-content: start;
+  gap: 2.4rem;
+  align-items: start;
+}
+
+.export-step1-pane > h4 {
+  margin: 0 0 1rem;
+  font-size: 18.72px;
+  line-height: 1.15;
+  font-weight: 700;
+  color: var(--upc-blue-deep);
+}
+
+.export-step1-inline-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 0.9rem;
+  margin-left: 0;
+}
+
+.export-step1-split > .export-step1-pane:last-child {
+  justify-self: start;
+  padding-top: 0.1rem;
+}
+
+.export-step1-inline-action-item {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+}
+
+.export-step1-inline-actions .compact-inline-action {
+  width: 210px;
+  min-width: 210px;
+  padding: 0.45rem 0.65rem;
+  font-size: 0.9rem;
+  line-height: 1.2;
+}
+
+.compact-inline-action-help {
+  margin: 0;
+  width: 210px;
+  font-size: 0.75rem;
+  line-height: 1.35;
+  color: #4f6f8a;
 }
 
 .config-picker-row .compact-inline-button {
@@ -1495,6 +1545,10 @@ button.workflow-step-pill.active:hover:not(:disabled) {
   font-size: 0.84rem;
   line-height: 1.25;
   box-shadow: 0 6px 14px rgba(0, 59, 92, 0.08);
+}
+
+.export-primary-card .config-summary-box {
+  margin-top: 2.5rem;
 }
 
 .config-summary-box::before {
@@ -1986,6 +2040,19 @@ button.plus-action {
   max-height: 10rem;
 }
 
+.manual-copy-row {
+  display: flex;
+  justify-content: flex-end;
+  align-items: center;
+  gap: 0.55rem;
+}
+
+.manual-copy-success {
+  color: #1e7d4d;
+  font-weight: 700;
+  font-size: 0.84rem;
+}
+
 .code-hint-row {
   display: flex;
   align-items: center;
@@ -2179,6 +2246,28 @@ button.plus-action {
   .workflow-card.sheet-selection-card .drive-select-field,
   .workflow-card.sheet-selection-card .sheet-choice-stack > label.field {
     grid-template-columns: 1fr;
+  }
+
+  .export-primary-card .config-drive-field .config-picker-row {
+    grid-template-columns: 1fr;
+  }
+
+  .export-step1-split {
+    grid-template-columns: 1fr;
+  }
+
+  .export-step1-inline-actions {
+    margin-left: 0;
+    width: 100%;
+  }
+
+  .export-step1-inline-actions .compact-inline-action {
+    width: 100%;
+    min-width: 0;
+  }
+
+  .compact-inline-action-help {
+    width: 100%;
   }
 
   .workflow-card.sheet-selection-card .sheet-child-row {

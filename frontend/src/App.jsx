@@ -313,8 +313,8 @@ export default function App() {
   const [debug] = useState(persisted.debug)
   const [lastGeneratedCode, setLastGeneratedCode] = useState(persisted.lastGeneratedCode)
   const [selectedJobId, setSelectedJobId] = useState(persisted.lastSelectedJobId)
-  const [selectedFaqSpreadsheetId, setSelectedFaqSpreadsheetId] = useState(persisted.selectedFaqSpreadsheetId || '')
-  const [selectedFaqSpreadsheetTitle, setSelectedFaqSpreadsheetTitle] = useState(persisted.selectedFaqSpreadsheetTitle || FIXED_SPREADSHEET_TITLE)
+  const [selectedFaqSpreadsheetId, setSelectedFaqSpreadsheetId] = useState('')
+  const [selectedFaqSpreadsheetTitle, setSelectedFaqSpreadsheetTitle] = useState(FIXED_SPREADSHEET_TITLE)
   const [selectedConfigFileId, setSelectedConfigFileId] = useState('')
   const [selectedConfigFileName, setSelectedConfigFileName] = useState('')
   const [configSelectionType, setConfigSelectionType] = useState('none')
@@ -354,7 +354,9 @@ export default function App() {
   const [generatorNoApprovedFaqs, setGeneratorNoApprovedFaqs] = useState(false)
   const [generatorApprovedRows, setGeneratorApprovedRows] = useState(0)
   const [generatorSubtopics, setGeneratorSubtopics] = useState(0)
+  const [manualCodeCopied, setManualCodeCopied] = useState(false)
   const [exportStep, setExportStep] = useState(1)
+  const [exportFlowMode, setExportFlowMode] = useState('')
   const [scrapeVisualProgress, setScrapeVisualProgress] = useState(0)
   const [logsCollapsed, setLogsCollapsed] = useState(false)
   const [googleBusy, setGoogleBusy] = useState(false)
@@ -400,9 +402,17 @@ export default function App() {
       ? step3Enabled
       : scrapeStep === 3)
   const exportStep1Enabled = isGoogleConnected
-  const exportStep2Enabled = isGoogleConnected && Boolean(selectedFaqSpreadsheetId)
-  const exportStep3Enabled = exportStep2Enabled && Boolean(lastGeneratedCode.trim())
+  const selectedSheetApprovedFaqs = selectedSheetStats.spreadsheetId === selectedFaqSpreadsheetId
+    ? selectedSheetStats.approvedFaqs
+    : 0
+  const hasApprovedFaqsInSelectedSheet = Boolean(selectedFaqSpreadsheetId) && selectedSheetApprovedFaqs > 0
+  const exportStep2Enabled = isGoogleConnected && hasApprovedFaqsInSelectedSheet
+  const exportStep3Enabled = exportStep2Enabled && (
+    exportFlowMode === 'automatic' || Boolean(lastGeneratedCode.trim())
+  )
   const canGoNextExportStep = exportStep2Enabled
+  const exportStep2NavEnabled = exportStep2Enabled && exportFlowMode === 'manual'
+  const exportStep3NavEnabled = exportStep2Enabled && exportFlowMode === 'automatic'
   const workflowSteps = [
     { id: 1, title: 'Pas 1: Configuració', enabled: true },
     { id: 2, title: 'Pas 2: Fitxer Sheets', enabled: step2Enabled },
@@ -1348,7 +1358,8 @@ export default function App() {
     }
   }
 
-  async function generateHtmlFromExternalSource() {
+  async function generateHtmlFromExternalSource(options = {}) {
+    const { silentSuccess = false } = options
     setExportMessage('')
     setGeneratorMissingSheet(false)
     setGeneratorNoApprovedFaqs(false)
@@ -1387,7 +1398,10 @@ export default function App() {
       setGeneratorCompleted(true)
       setGeneratorMissingSheet(false)
       setGeneratorNoApprovedFaqs(false)
-      setExportMessage('Codi HTML carregat des del document FAQ seleccionat.')
+      if (!silentSuccess) {
+        setExportMessage('Codi HTML carregat des del document FAQ seleccionat.')
+      }
+      return data.html_text || ''
     } catch (error) {
       const message = error instanceof Error ? error.message : 'No s’ha pogut generar l’HTML.'
       setLastGeneratedCode('')
@@ -1398,6 +1412,7 @@ export default function App() {
       setGeneratorMissingSheet(message.includes("No s'ha trobat cap document"))
       setGeneratorNoApprovedFaqs(message.toLowerCase().includes('cap faq aprovada'))
       setExportMessage(message)
+      throw error
     } finally {
       window.setTimeout(() => {
         setGeneratorBusy(false)
@@ -1405,14 +1420,53 @@ export default function App() {
     }
   }
 
+  async function startAutomaticExportFlow() {
+    setExportFlowMode('automatic')
+    setGenwebPublishMessage('')
+    setGenwebPublishError('')
+    if (!exportStep2Enabled) return
+    try {
+      await generateHtmlFromExternalSource({ silentSuccess: true })
+      setExportMessage('Codi HTML generat automàticament. Ara pots publicar-lo a Genweb.')
+      setExportStep(3)
+    } catch {
+      setExportStep(2)
+    }
+  }
+
+  async function copyManualGeneratedCode() {
+    const codeToCopy = (lastGeneratedCode || '').trim()
+    if (!codeToCopy) return
+    try {
+      await navigator.clipboard.writeText(codeToCopy)
+      setManualCodeCopied(true)
+      window.setTimeout(() => setManualCodeCopied(false), 2200)
+    } catch {
+      setExportMessage('No s’ha pogut copiar el codi al porta-retalls.')
+    }
+  }
+
+  function resetExportFlowToStart() {
+    setExportStep(1)
+    setExportFlowMode('')
+    setLastGeneratedCode('')
+    setGeneratorCompleted(false)
+    setGeneratorNoApprovedFaqs(false)
+    setGeneratorMissingSheet(false)
+    setGeneratorApprovedRows(0)
+    setGeneratorSubtopics(0)
+    setGeneratorProgress(0)
+    setManualCodeCopied(false)
+    setExportMessage('')
+    setGenwebPublishMessage('')
+    setGenwebPublishError('')
+    setGenwebPassword('')
+  }
+
   async function publishToGenweb() {
     setGenwebPublishMessage('')
     setGenwebPublishError('')
 
-    if (!lastGeneratedCode.trim()) {
-      setGenwebPublishError('Primer has de generar el codi font HTML.')
-      return
-    }
     if (!isValidHttpUrl(genwebUrl)) {
       setGenwebPublishError('La URL de Genweb no es valida.')
       return
@@ -1424,12 +1478,19 @@ export default function App() {
 
     setGenwebPublishBusy(true)
     try {
+      let htmlToPublish = (lastGeneratedCode || '').trim()
+      if (!htmlToPublish && exportFlowMode === 'automatic') {
+        htmlToPublish = (await generateHtmlFromExternalSource({ silentSuccess: true })).trim()
+      }
+      if (!htmlToPublish) {
+        throw new Error('Primer has de generar el codi font HTML.')
+      }
       const response = await apiFetch(`${API_BASE}/api/genweb/publish`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           target_url: genwebUrl.trim(),
-          html_text: lastGeneratedCode,
+          html_text: htmlToPublish,
           username: genwebUsername.trim(),
           password: genwebPassword,
         }),
@@ -1492,6 +1553,7 @@ export default function App() {
 
   useEffect(() => {
     if (activeView !== 'export') return
+    setExportFlowMode('')
     setLastGeneratedCode('')
     setGeneratorCompleted(false)
     setGeneratorBusy(false)
@@ -2075,19 +2137,19 @@ export default function App() {
               <div className="main-stack-frame">
                 <div className="workflow-stepper" aria-label="Progrés exportació">
                   <button type="button" className={`workflow-step-pill${exportStep === 1 ? ' active' : ''}`} onClick={() => setExportStep(1)} disabled={!exportStep1Enabled}>
-                    Pas 1: Arxiu FAQ
+                    Arxiu FAQ
                   </button>
-                  <button type="button" className={`workflow-step-pill${exportStep === 2 ? ' active' : ''}`} onClick={() => { if (canGoNextExportStep) setExportStep(2) }} disabled={!exportStep2Enabled}>
-                    Pas 2: Generar codi
+                  <button type="button" className={`workflow-step-pill${exportStep === 2 ? ' active' : ''}`} onClick={() => { if (exportStep2NavEnabled) setExportStep(2) }} disabled={!exportStep2NavEnabled}>
+                    Manual: codi font
                   </button>
-                  <button type="button" className={`workflow-step-pill${exportStep === 3 ? ' active' : ''}`} onClick={() => { if (exportStep3Enabled) setExportStep(3) }} disabled={!exportStep3Enabled}>
-                    Pas 3: Penjar a Genweb
+                  <button type="button" className={`workflow-step-pill${exportStep === 3 ? ' active' : ''}`} onClick={() => { if (exportStep3NavEnabled) setExportStep(3) }} disabled={!exportStep3NavEnabled}>
+                    Automàtic: Genweb
                   </button>
                 </div>
 
                 <article className={`panel export-primary-card${(exportStep === 1 && !exportStep1Enabled) || (exportStep === 2 && !exportStep2Enabled) || (exportStep === 3 && !exportStep3Enabled) ? ' is-disabled' : ''}`}>
                   <div className="workflow-card-head">
-                    {exportStep === 1 && <h3>Tria l’arxiu amb les FAQs per convertir</h3>}
+                    {exportStep === 1 && null}
                     {exportStep === 2 && <h3>Generador de codi font</h3>}
                     {exportStep === 3 && <h3>Publicació a Genweb</h3>}
                     {exportStep === 2 && (
@@ -2115,45 +2177,85 @@ export default function App() {
 
                   {exportStep === 1 ? (
                     <>
-                      <label className="field drive-select-field config-drive-field">
-                        <div className="config-picker-row">
-                          <span className="field-with-help config-picker-label">
-                            <span>Tria arxiu FAQ</span>
-                            <span className="inline-help">
-                              <span className="inline-help-trigger" aria-hidden="true">?</span>
-                              <span className="inline-help-popover">Selecciona el Google Sheet de FAQs que vols convertir a codi font. Ruta: El meu Drive &gt; UPC &gt; FAQs.</span>
-                            </span>
-                          </span>
-                          <select
-                            value={selectedFaqSpreadsheetId}
-                            onChange={(event) => {
-                              const nextId = event.target.value
-                              const nextSheet = availableFaqSheets.find((item) => item.id === nextId)
-                              setSelectedFaqSpreadsheetId(nextId)
-                              setSelectedFaqSpreadsheetTitle(nextSheet?.name || FIXED_SPREADSHEET_TITLE)
-                            }}
-                            disabled={!exportStep1Enabled || driveListBusy || !availableFaqSheets.length}
-                          >
-                            {!availableFaqSheets.length ? (
-                              <option value="">No hi ha fitxers disponibles</option>
-                            ) : (
-                              <>
-                                <option value="">Selecciona un arxiu FAQ</option>
-                                {availableFaqSheets.map((item) => (
-                                  <option key={item.id} value={item.id}>{item.name}</option>
-                                ))}
-                              </>
-                            )}
-                          </select>
+                      <div className="export-step1-split">
+                        <div className="export-step1-pane">
+                          <h4>Tria arxiu FAQ</h4>
+                          <label className="field drive-select-field config-drive-field">
+                            <div className="config-picker-row">
+                              <select
+                                value={selectedFaqSpreadsheetId}
+                                onChange={(event) => {
+                                  const nextId = event.target.value
+                                  const nextSheet = availableFaqSheets.find((item) => item.id === nextId)
+                                  setSelectedFaqSpreadsheetId(nextId)
+                                  setSelectedFaqSpreadsheetTitle(nextSheet?.name || FIXED_SPREADSHEET_TITLE)
+                                  setExportFlowMode('')
+                                  setLastGeneratedCode('')
+                                  setGeneratorCompleted(false)
+                                  setGeneratorNoApprovedFaqs(false)
+                                  setManualCodeCopied(false)
+                                  setGenwebPublishMessage('')
+                                  setGenwebPublishError('')
+                                }}
+                                disabled={!exportStep1Enabled || driveListBusy || !availableFaqSheets.length}
+                              >
+                                {!availableFaqSheets.length ? (
+                                  <option value="">No hi ha fitxers disponibles</option>
+                                ) : (
+                                  <>
+                                    <option value="">Selecciona un arxiu FAQ</option>
+                                    {availableFaqSheets.map((item) => (
+                                      <option key={item.id} value={item.id}>{item.name}</option>
+                                    ))}
+                                  </>
+                                )}
+                              </select>
+                            </div>
+                          </label>
+                          {selectedFaqSpreadsheetId && (
+                            <div className="config-summary-box" role="status" aria-live="polite">
+                              {loadingSheetStatsId === selectedFaqSpreadsheetId
+                                ? 'Carregant FAQs...'
+                                : `Carregat amb ${selectedSheetStats.spreadsheetId === selectedFaqSpreadsheetId ? selectedSheetStats.totalFaqs : 0} FAQs, de les quals ${selectedSheetApprovedFaqs} estan aprovades.`}
+                            </div>
+                          )}
+                          {selectedFaqSpreadsheetId && loadingSheetStatsId !== selectedFaqSpreadsheetId && selectedSheetApprovedFaqs === 0 && (
+                            <div className="download-error-banner" role="alert" aria-live="assertive">
+                              No s&apos;ha trobat cap FAQ aprovada
+                            </div>
+                          )}
                         </div>
-                      </label>
-                      {selectedFaqSpreadsheetId && (
-                        <div className="config-summary-box" role="status" aria-live="polite">
-                          {loadingSheetStatsId === selectedFaqSpreadsheetId
-                            ? 'Carregant FAQs...'
-                            : `Carregat amb ${selectedSheetStats.spreadsheetId === selectedFaqSpreadsheetId ? selectedSheetStats.totalFaqs : 0} FAQs, de les quals ${selectedSheetStats.spreadsheetId === selectedFaqSpreadsheetId ? selectedSheetStats.approvedFaqs : 0} estan aprovades.`}
+                        <div className="export-step1-pane">
+                          <h4>Tria el procés</h4>
+                          <div className="export-step1-inline-actions">
+                            <div className="export-step1-inline-action-item">
+                              <button
+                                type="button"
+                                className="secondary compact-inline-action"
+                                onClick={() => {
+                                  setExportFlowMode('manual')
+                                  setExportStep(2)
+                                }}
+                                disabled={!canGoNextExportStep}
+                              >
+                                Procés manual
+                              </button>
+                              <p className="compact-inline-action-help">Si vols copiar el codi font i posar-lo manualment.</p>
+                            </div>
+                            <div className="export-step1-inline-action-item">
+                              <button
+                                type="button"
+                                className="next-step-button compact-inline-action"
+                                onClick={startAutomaticExportFlow}
+                                disabled={!canGoNextExportStep || generatorBusy}
+                              >
+                                {generatorBusy ? 'Preparant...' : 'Procés automàtic'}
+                              </button>
+                              <p className="compact-inline-action-help">Si vols penjar directament a una pàgina Genweb.</p>
+                            </div>
+                          </div>
                         </div>
-                      )}
+                      </div>
                     </>
                   ) : (
                     <div className="action-stack">
@@ -2184,6 +2286,21 @@ export default function App() {
                         </div>
                       )}
                       <pre className="code-block">{lastGeneratedCode || 'Encara no s’ha generat cap HTML.'}</pre>
+                      <div className="manual-copy-row">
+                        <button
+                          type="button"
+                          className="copy-inline-button"
+                          onClick={copyManualGeneratedCode}
+                          disabled={!lastGeneratedCode.trim()}
+                        >
+                          Copia el codi
+                        </button>
+                        {manualCodeCopied && (
+                          <span className="manual-copy-success" role="status" aria-live="polite">
+                            ✓ Copiat
+                          </span>
+                        )}
+                      </div>
                     </div>
                   )}
 
@@ -2227,44 +2344,24 @@ export default function App() {
                   )}
 
                 </article>
-                {exportStep === 1 && (
-                  <div className="workflow-step-actions">
-                    <span aria-hidden="true" />
-                    <button type="button" className="next-step-button" onClick={() => setExportStep(2)} disabled={!canGoNextExportStep}>
-                      Següent pas
-                    </button>
-                  </div>
-                )}
                 {exportStep === 2 && (
                   <div className="workflow-step-actions">
                     <button
                       type="button"
                       className="secondary"
-                      onClick={() => setExportStep(1)}
+                      onClick={resetExportFlowToStart}
                     >
-                      Pas anterior
-                    </button>
-                    <button type="button" className="next-step-button" onClick={() => setExportStep(3)} disabled={!exportStep3Enabled}>
-                      Següent pas
+                      Tornar a l&apos;inici
                     </button>
                   </div>
                 )}
                 {exportStep === 3 && (
                   <div className="workflow-step-actions">
                     <div className="export-step3-actions">
-                      <div className="export-step3-actions-left">
-                        <button
-                          type="button"
-                          className="secondary"
-                          onClick={() => setExportStep(2)}
-                        >
-                          Pas anterior
-                        </button>
-                        <button type="button" className="secondary" onClick={() => setExportStep(1)} disabled={!exportStep1Enabled}>
-                          Tornar a l&apos;inici
-                        </button>
-                      </div>
-                      <button type="button" onClick={publishToGenweb} disabled={genwebPublishBusy || !lastGeneratedCode.trim()}>
+                      <button type="button" className="secondary" onClick={resetExportFlowToStart} disabled={!exportStep1Enabled}>
+                        Tornar a l&apos;inici
+                      </button>
+                      <button type="button" onClick={publishToGenweb} disabled={genwebPublishBusy || !exportStep2Enabled}>
                         {genwebPublishBusy ? 'Publicant...' : 'Publicar ara'}
                       </button>
                     </div>
