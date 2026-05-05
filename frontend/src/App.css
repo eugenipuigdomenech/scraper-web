@@ -306,6 +306,7 @@ pre {
   text-align: left;
   box-shadow: 0 14px 28px rgba(1, 32, 59, 0.14);
   backdrop-filter: blur(3px);
+  position: relative;
 }
 
 .hero-cta strong {
@@ -340,8 +341,10 @@ pre {
 .hero-cta.active {
   background: var(--upc-blue-dark);
   color: var(--upc-white);
-  border-color: var(--upc-blue-dark);
-  box-shadow: 0 20px 34px rgba(0, 59, 92, 0.28);
+  border-color: #ffffff;
+  box-shadow:
+    0 0 0 3px rgba(255, 255, 255, 0.95),
+    0 20px 34px rgba(0, 59, 92, 0.28);
   transform: translateY(-2px) scale(1.01);
 }
 
@@ -353,9 +356,23 @@ pre {
 .hero-cta.active:hover:not(:disabled) {
   background: var(--upc-blue-deep);
   color: var(--upc-white);
-  border-color: var(--upc-blue-deep);
+  border-color: #ffffff;
   box-shadow: 0 30px 48px rgba(0, 43, 70, 0.34);
   transform: translateY(-6px) scale(1.02);
+}
+
+.hero-cta-selected {
+  position: absolute;
+  top: 0.5rem;
+  right: 0.55rem;
+  font-size: 0.68rem;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  background: #ffffff;
+  color: var(--upc-blue-deep);
+  border: 1px solid rgba(0, 59, 92, 0.18);
+  padding: 0.2rem 0.42rem;
 }
 
 .hero-actions,

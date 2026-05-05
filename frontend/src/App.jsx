@@ -3,7 +3,6 @@ import './App.css'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import upcRoundLogo from './assets/upc_logo_2.png'
 import upcFooterLogo from './assets/upc_logo.png'
-import homeLogo from './assets/home_logo.png'
 import faqsLogo from './assets/faqs1_logo.png'
 import googleLogo from './assets/Google_logo.png'
 
@@ -33,7 +32,7 @@ const defaultSources = [
 ]
 
 const defaultState = {
-  activeView: 'home',
+  activeView: 'scrape',
   sources: defaultSources,
   debug: false,
   lastGeneratedCode: '',
@@ -244,9 +243,11 @@ function loadPersistedState() {
     const raw = window.localStorage.getItem(STORAGE_KEY)
     if (!raw) return defaultState
     const parsed = JSON.parse(raw)
+    const persistedView = parsed?.activeView === 'export' ? 'export' : 'scrape'
     return {
       ...defaultState,
       ...parsed,
+      activeView: persistedView,
       lastGeneratedCode: '',
       sources: normalizeSources(parsed.sources),
       shareRecipients: normalizeShareRecipients(parsed.shareRecipients),
@@ -1287,6 +1288,12 @@ export default function App() {
   async function connectGoogle() {
     setGoogleBusy(true)
     setExportMessage('')
+    // Obrim el popup immediatament dins del gest de clic per evitar bloqueig en incognit.
+    const popup = window.open('', '_blank', 'popup=yes,width=560,height=720')
+    if (popup) {
+      popup.document.title = 'Iniciant autenticacio de Google...'
+      popup.document.body.innerHTML = '<p style="font-family: sans-serif; padding: 16px;">Carregant autenticacio de Google...</p>'
+    }
     try {
       const formData = new FormData()
       const response = await apiFetch(`${API_BASE}/api/google/connect`, { method: 'POST', body: formData })
@@ -1294,9 +1301,12 @@ export default function App() {
       if (!response.ok) throw new Error(data?.detail || `HTTP ${response.status}`)
       if (!data?.authorization_url) throw new Error('No s’ha rebut la URL d’autenticació de Google.')
 
-      const popup = window.open(data.authorization_url, '_blank', 'popup=yes,width=560,height=720')
-      if (!popup) throw new Error('El navegador ha bloquejat la finestra de login de Google.')
+      if (!popup) {
+        throw new Error('El navegador ha bloquejat la finestra de login de Google.')
+      }
+      popup.location.replace(data.authorization_url)
     } catch (error) {
+      if (popup && !popup.closed) popup.close()
       setExportMessage(error instanceof Error ? error.message : 'No s’ha pogut iniciar la sessió Google.')
       setGoogleBusy(false)
     }
@@ -1619,7 +1629,6 @@ export default function App() {
           ) : (
             <>
               <p className="google-status-row disconnected">
-                <img className="panel-icon google-badge inline" src={googleLogo} alt="" aria-hidden="true" />
                 <span className="status queued">No connectat</span>
               </p>
               <div className="action-stack">
@@ -1659,7 +1668,9 @@ export default function App() {
                 type="button"
                 className={`hero-cta ${activeView === 'scrape' ? 'active' : ''}`}
                 onClick={() => setActiveView('scrape')}
+                aria-pressed={activeView === 'scrape'}
               >
+                {activeView === 'scrape' && <span className="hero-cta-selected">Seleccionat</span>}
                 <span className="hero-cta-kicker">Captura</span>
                 <strong>Descarregador de Preguntes Freqüents</strong>
                 <span className="hero-cta-copy">Prepara topics, URLs i envia el resultat directament a Google Sheets.</span>
@@ -1668,7 +1679,9 @@ export default function App() {
                 type="button"
                 className={`hero-cta ${activeView === 'export' ? 'active' : ''}`}
                 onClick={() => setActiveView('export')}
+                aria-pressed={activeView === 'export'}
               >
+                {activeView === 'export' && <span className="hero-cta-selected">Seleccionat</span>}
                 <span className="hero-cta-kicker">Publicació</span>
                 <strong>Generador de codi font</strong>
                 <span className="hero-cta-copy">Converteix les files aprovades en HTML net i llest per Genweb.</span>
@@ -2373,12 +2386,12 @@ export default function App() {
         )}
 
         <footer className="home-footnote">
-          <img className="footer-logo" src={upcFooterLogo} alt="Universitat Politecnica de Catalunya" />
+          <img className="footer-logo" src={upcFooterLogo} alt="Universitat Politècnica de Catalunya" />
           <div className="footer-copy">
             <p><strong>Credits: UPC ESEIAAT</strong></p>
             <p>
-              Eina desenvolupada en el marc del projecte Genweb de la Universitat Politecnica de Catalunya (UPC)
-              per a la gestio i publicacio de continguts FAQ.
+              Eina desenvolupada en el marc del projecte Genweb de la Universitat Politècnica de Catalunya (UPC)
+              per a la gestió i publicació de continguts FAQ.
             </p>
           </div>
         </footer>
