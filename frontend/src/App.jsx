@@ -5,6 +5,8 @@ import upcRoundLogo from './assets/upc_logo_2.png'
 import upcFooterLogo from './assets/upc_logo.png'
 import faqsLogo from './assets/faqs1_logo.png'
 import googleLogo from './assets/Google_logo.png'
+import downloadIcon from './assets/download.png'
+import uploadIcon from './assets/upload.png'
 
 const defaultApiBase = `${window.location.protocol}//${window.location.hostname}:8000`
 const API_BASE = (import.meta.env.VITE_API_URL || defaultApiBase).replace(/\/$/, '')
@@ -1660,8 +1662,7 @@ export default function App() {
        
             <h1>Eina de gestió de preguntes freqüents de la UPC</h1>
             <p className="hero-text">
-              Captura contingut des de webs UPC, revisa’l amb un flux clar i genera el codi HTML final amb una
-              aparença coherent amb l’ecosistema institucional.
+              Aquesta aplicació descarrega FAQs des de les URLs, les centralitza i valida a Google Sheets, i publica a Genweb únicament les preguntes aprovades.
             </p>
             <div className="hero-actions">
               <button
@@ -1671,9 +1672,9 @@ export default function App() {
                 aria-pressed={activeView === 'scrape'}
               >
                 {activeView === 'scrape' && <span className="hero-cta-selected">Seleccionat</span>}
-                <span className="hero-cta-kicker">Captura</span>
-                <strong>Descarregador de Preguntes Freqüents</strong>
-                <span className="hero-cta-copy">Prepara topics, URLs i envia el resultat directament a Google Sheets.</span>
+        
+                <strong className="hero-cta-title"><img className="hero-cta-icon" src={downloadIcon} alt="" aria-hidden="true" />Descarregador de FAQs</strong>
+                <span className="hero-cta-copy">Descarrega FAQs i envia-les a un Google Sheets.</span>
               </button>
               <button
                 type="button"
@@ -1682,9 +1683,8 @@ export default function App() {
                 aria-pressed={activeView === 'export'}
               >
                 {activeView === 'export' && <span className="hero-cta-selected">Seleccionat</span>}
-                <span className="hero-cta-kicker">Publicació</span>
-                <strong>Generador de codi font</strong>
-                <span className="hero-cta-copy">Converteix les files aprovades en HTML net i llest per Genweb.</span>
+                <strong className="hero-cta-title"><img className="hero-cta-icon" src={uploadIcon} alt="" aria-hidden="true" />Publicació de FAQs</strong>
+                <span className="hero-cta-copy">Puja les FAQs aprovades a Genweb.</span>
               </button>
             </div>
           </div>
@@ -1692,7 +1692,7 @@ export default function App() {
           <aside className="hero-aside">
             <img className="hero-roundel" src={upcRoundLogo} alt="UPC" />
             <div className="hero-note">Gestio de FAQs</div>
-            <div className="hero-note alt">Captura i publicació</div>
+            <div className="hero-note alt">Descarrega i publica</div>
           </aside>
         </section>
 
