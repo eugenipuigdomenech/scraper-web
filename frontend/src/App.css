@@ -1432,6 +1432,16 @@ button.workflow-step-pill.active:hover:not(:disabled) {
   padding-inline: 0.95rem;
 }
 
+.export-step3-config-actions {
+  display: inline-flex;
+  gap: 0.6rem;
+  align-items: center;
+}
+
+.export-step3-config-actions > button {
+  min-width: 120px;
+}
+
 .workflow-card .field.config-drive-field {
   width: 100%;
   max-width: none;

@@ -215,3 +215,31 @@ class DriveShareCountResponse(BaseModel):
     file_id: str
     shared_people_count: int
     shared_people: list[str]
+
+
+class ActivityLogRequest(BaseModel):
+    eventType: str = Field(default="visit", max_length=32)
+    sessionId: str = Field(default="", max_length=128)
+    url: str = Field(default="", max_length=2048)
+    path: str = Field(default="", max_length=1024)
+    title: str = Field(default="", max_length=512)
+    referrer: str = Field(default="", max_length=2048)
+    userAgent: str = Field(default="", max_length=1024)
+    language: str = Field(default="", max_length=32)
+    platform: str = Field(default="", max_length=64)
+    timezone: str = Field(default="", max_length=64)
+    screenWidth: int | None = None
+    screenHeight: int | None = None
+    viewportWidth: int | None = None
+    viewportHeight: int | None = None
+    durationSeconds: int | None = None
+    clickCount: int | None = None
+    utmSource: str = Field(default="", max_length=256)
+    utmMedium: str = Field(default="", max_length=256)
+    utmCampaign: str = Field(default="", max_length=256)
+    utmTerm: str = Field(default="", max_length=256)
+    utmContent: str = Field(default="", max_length=256)
+
+
+class ActivityLogResponse(BaseModel):
+    ok: bool

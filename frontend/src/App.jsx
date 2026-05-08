@@ -7,6 +7,7 @@ import faqsLogo from './assets/faqs1_logo.png'
 import googleLogo from './assets/Google_logo.png'
 import downloadIcon from './assets/download.png'
 import uploadIcon from './assets/upload.png'
+import { setupActivityTracking } from './services/activityLogger'
 
 const defaultApiBase = `${window.location.protocol}//${window.location.hostname}:8000`
 const API_BASE = (import.meta.env.VITE_API_URL || defaultApiBase).replace(/\/$/, '')
@@ -43,6 +44,7 @@ const defaultState = {
   selectedFaqSpreadsheetTitle: FIXED_SPREADSHEET_TITLE,
   selectedConfigFileId: '',
   selectedConfigFileName: '',
+  genwebUrl: '',
   shareRecipients: [{ id: 'default-share', value: DEFAULT_SHARE_EMAIL }],
 }
 
@@ -181,12 +183,14 @@ function parseConfigCsv(text) {
   const topicIndex = header.findIndex((value) => ['topic', 'tema'].includes(value))
   const urlIndex = header.findIndex((value) => ['url', 'link', 'enllac'].includes(value))
   const enabledIndex = header.findIndex((value) => ['enabled', 'actiu', 'activa'].includes(value))
+  const genwebUrlIndex = header.findIndex((value) => ['genweb_url', 'genweb url', 'web_url', 'web url', 'pagina_web', 'pagina web'].includes(value))
   const hasHeader = topicIndex !== -1 && urlIndex !== -1
 
   const dataLines = hasHeader ? candidateLines.slice(1) : candidateLines
   const rows = dataLines.map(parseCsvLine)
 
   if (hasHeader) {
+    let parsedGenwebUrl = ''
     const parsedWithHeader = rows
       .map((cells) => ({
         topic: (cells[topicIndex] || '').trim(),
@@ -196,8 +200,13 @@ function parseConfigCsv(text) {
           : !['false', '0', 'no', 'off'].includes(((cells[enabledIndex] || '').trim().toLowerCase())),
       }))
       .filter((row) => row.topic !== '' || row.url !== '')
+    if (genwebUrlIndex !== -1) {
+      const match = rows.find((cells) => (cells[genwebUrlIndex] || '').trim() !== '')
+      parsedGenwebUrl = (match?.[genwebUrlIndex] || '').trim()
+    }
     return {
       rows: parsedWithHeader,
+      genwebUrl: parsedGenwebUrl,
       debug: {
         totalLines: allLines.length,
         candidateLines: candidateLines.length,
@@ -223,6 +232,7 @@ function parseConfigCsv(text) {
     .filter((row) => row.topic !== '' || row.url !== '')
   return {
     rows: parsedFallback,
+    genwebUrl: '',
     debug: {
       totalLines: allLines.length,
       candidateLines: candidateLines.length,
@@ -341,7 +351,7 @@ export default function App() {
   const [processMessage, setProcessMessage] = useState('')
   const [processError, setProcessError] = useState('')
   const [exportMessage, setExportMessage] = useState('')
-  const [genwebUrl, setGenwebUrl] = useState('')
+  const [genwebUrl, setGenwebUrl] = useState(persisted.genwebUrl || '')
   const [genwebUsername, setGenwebUsername] = useState('')
   const [genwebPassword, setGenwebPassword] = useState('')
   const [genwebPublishBusy, setGenwebPublishBusy] = useState(false)
@@ -492,6 +502,11 @@ export default function App() {
   }
 
   useEffect(() => {
+    const cleanupTracking = setupActivityTracking()
+    return cleanupTracking
+  }, [])
+
+  useEffect(() => {
     try {
       window.localStorage.setItem(
         STORAGE_KEY,
@@ -504,6 +519,7 @@ export default function App() {
           selectedFaqSpreadsheetTitle,
           selectedConfigFileId,
           selectedConfigFileName,
+          genwebUrl,
           shareRecipients,
         }),
       )
@@ -519,6 +535,7 @@ export default function App() {
     selectedFaqSpreadsheetTitle,
     selectedConfigFileId,
     selectedConfigFileName,
+    genwebUrl,
     shareRecipients,
   ])
 
@@ -590,6 +607,7 @@ export default function App() {
         setNewConfigFileName('')
         setConfigSelectionType('none')
       }
+      return { faqItems, configItems }
     } finally {
       setDriveListBusy(false)
     }
@@ -746,6 +764,7 @@ export default function App() {
       const parsedConfig = parseConfigCsv(data?.content || '')
       const importedRows = parsedConfig.rows
       applyImportedConfigRows(importedRows, fileName || 'Drive', cleanFileId)
+      setGenwebUrl(parsedConfig.genwebUrl || '')
       setLoadedConfigSummaryFileId(cleanFileId)
       setLoadingConfigFileId('')
       autosaveInitializedRef.current = false
@@ -1101,7 +1120,8 @@ export default function App() {
   }
 
   function buildConfigCsvText() {
-    const rows = ['topic;url;enabled']
+    const rows = ['topic;url;enabled;genweb_url']
+    const normalizedGenwebUrl = genwebUrl.trim()
 
     sources.forEach((group) => {
       group.urls.forEach((url) => {
@@ -1110,12 +1130,60 @@ export default function App() {
             escapeCsvCell(group.topic.trim()),
             escapeCsvCell(url.value.trim()),
             escapeCsvCell(url.enabled === false ? 'false' : 'true'),
+            escapeCsvCell(normalizedGenwebUrl),
           ].join(';'),
         )
       })
     })
 
+    if (!sources.length) {
+      rows.push(`;;;${escapeCsvCell(normalizedGenwebUrl)}`)
+    }
+
     return `\uFEFF${rows.join('\r\n')}`
+  }
+
+  async function handleStep3LoadConfig() {
+    if (!isGoogleConnected) {
+      setExportMessage('Connecta Google per carregar configuracions de Drive.')
+      return
+    }
+
+    try {
+      const loaded = await loadFaqSheets()
+      const configItems = Array.isArray(loaded?.configItems) ? loaded.configItems : []
+      if (!configItems.length) {
+        setExportMessage('No hi ha cap configuració CSV a Drive (UPC/FAQs/Configuracions).')
+        return
+      }
+
+      const current = configItems.find((item) => item.id === selectedConfigFileId)
+      if (current) {
+        await loadSelectedConfigFile(current.id, current.name)
+        return
+      }
+
+      if (configItems.length === 1) {
+        await loadSelectedConfigFile(configItems[0].id, configItems[0].name)
+        return
+      }
+
+      const options = configItems
+        .slice(0, 20)
+        .map((item, index) => `${index + 1}. ${item.name}`)
+        .join('\n')
+      const rawPick = window.prompt(`Tria configuració (número):\n${options}`)
+      if (!rawPick) return
+      const pick = Number.parseInt(rawPick, 10)
+      if (!Number.isFinite(pick) || pick < 1 || pick > Math.min(configItems.length, 20)) {
+        setExportMessage('Selecció no vàlida.')
+        return
+      }
+      const chosen = configItems[pick - 1]
+      await loadSelectedConfigFile(chosen.id, chosen.name)
+    } catch (error) {
+      setExportMessage(error instanceof Error ? error.message : 'No s’ha pogut carregar la configuració.')
+    }
   }
 
   function resolveConfigFileName() {
@@ -1224,7 +1292,7 @@ export default function App() {
         autosaveTimerRef.current = null
       }
     }
-  }, [isGoogleConnected, configSelectionType, newConfigFileName, currentConfigFile?.name, selectedConfigFileName, sources])
+  }, [isGoogleConnected, configSelectionType, newConfigFileName, currentConfigFile?.name, selectedConfigFileName, sources, genwebUrl])
 
   function addShareRecipient() {
     setShareRecipients((current) => [...current, createShareRecipient('')])
@@ -2319,12 +2387,33 @@ export default function App() {
 
                   {exportStep === 3 && (
                     <div className="export-code-inline">
+                      <div className="config-picker-row export-step3-config-actions">
+                        <button
+                          type="button"
+                          className="secondary"
+                          onClick={() => { handleStep3LoadConfig().catch(() => {}) }}
+                          disabled={!isGoogleConnected}
+                        >
+                          Carrega
+                        </button>
+                        <button
+                          type="button"
+                          className="secondary"
+                          onClick={() => { saveConfigToDrive({ silent: false }).catch(() => {}) }}
+                          disabled={!isGoogleConnected}
+                        >
+                          Desa
+                        </button>
+                      </div>
                       <label className="field field-inline">
                         <span>URL de la pàgina FAQ</span>
                         <input
                           type="url"
                           value={genwebUrl}
-                          onChange={(event) => setGenwebUrl(event.target.value)}
+                          onChange={(event) => {
+                            sourcesEditedRef.current = true
+                            setGenwebUrl(event.target.value)
+                          }}
                         />
                       </label>
                       <label className="field field-inline">

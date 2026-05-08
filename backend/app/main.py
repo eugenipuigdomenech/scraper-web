@@ -11,12 +11,14 @@ from urllib.parse import urlparse, urlunparse
 from pathlib import Path
 import unicodedata
 import requests
+from dotenv import load_dotenv
 
 from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse, StreamingResponse
 from starlette.middleware.sessions import SessionMiddleware
 
+from app.activity_log import append_activity_log_row
 from app.constants import SHEETS_COLUMNS
 from app.html_export import (
     approved_rows_to_html,
@@ -25,6 +27,8 @@ from app.html_export import (
 )
 from app.job_manager import job_manager
 from app.schemas import (
+    ActivityLogRequest,
+    ActivityLogResponse,
     DriveShareCountResponse,
     FaqSheetStatsResponse,
     GoogleConnectResponse,
@@ -74,6 +78,9 @@ from app.sheets import (
     save_config_text_to_drive_oauth,
     share_drive_file_with_user_oauth,
 )
+
+load_dotenv("backend/.env")
+load_dotenv(".env")
 
 
 def _normalize_text(value: str) -> str:
@@ -329,8 +336,50 @@ def _build_genweb_api_url(target_url: str) -> str:
     return urlunparse((parsed.scheme, parsed.netloc, api_path, "", "", ""))
 
 
+def _extract_client_ip(request: Request) -> str:
+    forwarded = (request.headers.get("x-forwarded-for") or "").strip()
+    if forwarded:
+        return forwarded.split(",")[0].strip()
+    real_ip = (request.headers.get("x-real-ip") or "").strip()
+    if real_ip:
+        return real_ip
+    return request.client.host if request.client else ""
+
+
 @app.get("/health")
 def health():
+    return {"ok": True}
+
+
+@app.post("/api/activity/log", response_model=ActivityLogResponse)
+def activity_log(request: Request, payload: ActivityLogRequest):
+    # Only log page entries, never leave/other events.
+    if (payload.eventType or "").strip().lower() != "visit":
+        return {"ok": True}
+
+    google_user = ""
+    try:
+        session_data = get_google_session_status(token_file=_session_token_file(request))
+        google_user = (
+            (session_data.get("profile_name") or "").strip()
+            or (session_data.get("profile_email") or "").strip()
+        )
+    except Exception:
+        google_user = ""
+
+    # Only write rows when we have a resolved Google user name/email.
+    if not google_user:
+        return {"ok": True}
+
+    try:
+        append_activity_log_row([
+            google_user,
+            payload.sessionId,
+        ])
+    except Exception as exc:
+        error_name = exc.__class__.__name__
+        error_text = str(exc) or repr(exc)
+        raise HTTPException(status_code=500, detail=f"No s'ha pogut registrar l'activitat [{error_name}]: {error_text}") from exc
     return {"ok": True}
 
 
