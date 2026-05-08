@@ -8,6 +8,17 @@ __pycache__/
 venv/
 .env
 backend/secrets/
+backend/.env/
+frontend/.env/
+**/.venv/
+backend/.venv/
+frontend/.venv/
+backend/.env.example
+frontend/.env.example
+frontend/.env.example
+frontend/.env.production
+frontend/.env.development
+
 
 # Node
 node_modules/
