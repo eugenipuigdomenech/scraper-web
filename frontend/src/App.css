@@ -1364,6 +1364,35 @@ button.workflow-step-pill.active:hover:not(:disabled) {
   justify-content: start;
 }
 
+.config-picker-row.with-autosave {
+  grid-template-columns: auto minmax(260px, 360px) auto;
+  align-items: center;
+}
+
+.export-primary-card .config-drive-field .config-picker-row.with-autosave {
+  grid-template-columns: auto minmax(260px, 360px) auto;
+}
+
+.config-inline-row {
+  align-items: center;
+}
+
+.config-select-autosave-inline {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+}
+
+.config-select-autosave-inline > select {
+  min-width: 260px;
+  width: 320px;
+}
+
+.config-select-autosave-inline > .config-new-name-input {
+  min-width: 260px;
+  width: 320px;
+}
+
 .config-picker-row select,
 .config-picker-row input {
   width: 100%;

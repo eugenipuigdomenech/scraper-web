@@ -13,7 +13,7 @@ import unicodedata
 import requests
 from dotenv import load_dotenv
 
-from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
+from fastapi import FastAPI, File, Form, HTTPException, Query, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse, StreamingResponse
 from starlette.middleware.sessions import SessionMiddleware
@@ -98,6 +98,13 @@ def _row_value(row: dict[str, str], *names: str) -> str:
         if _normalize_text(key) in aliases:
             return (value or "").strip()
     return ""
+
+
+def _normalize_config_scope(config_scope: str) -> str:
+    clean_scope = (config_scope or "scrape").strip().lower()
+    if clean_scope not in {"scrape", "genweb"}:
+        raise HTTPException(status_code=400, detail="El parametre config_scope ha de ser 'scrape' o 'genweb'.")
+    return clean_scope
 
 
 def normalize_row_dict(row: dict[str, str]) -> dict[str, str]:
@@ -532,13 +539,15 @@ def google_fixed_faqs_spreadsheets(request: Request):
 
 
 @app.get("/api/google/faqs/configurations", response_model=GoogleFixedFaqsListResponse)
-def google_fixed_configurations(request: Request):
+def google_fixed_configurations(request: Request, config_scope: str = Query(default="scrape")):
     token_file = _session_token_file(request)
+    clean_scope = _normalize_config_scope(config_scope)
     try:
-        items = list_fixed_config_files_oauth(token_file=token_file)
+        items = list_fixed_config_files_oauth(token_file=token_file, config_scope=clean_scope)
     except Exception as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
-    return {"folder_path": "UPC/FAQs/Configuracions", "items": items}
+    folder = "Descarrega" if clean_scope == "scrape" else "Genweb"
+    return {"folder_path": f"UPC/FAQs/Configuracions/{folder}", "items": items}
 
 
 @app.get("/api/google/drive/file-content", response_model=GoogleDriveFileContentResponse)
@@ -552,10 +561,16 @@ def google_drive_file_content(request: Request, file_id: str):
 
 
 @app.post("/api/google/faqs/configurations", response_model=SaveConfigResponse)
-def save_google_configuration(request: Request, payload: SaveConfigRequest):
+def save_google_configuration(request: Request, payload: SaveConfigRequest, config_scope: str = Query(default="scrape")):
     token_file = _session_token_file(request)
+    clean_scope = _normalize_config_scope(config_scope)
     try:
-        saved = save_config_text_to_drive_oauth(token_file=token_file, name=payload.name, content=payload.content)
+        saved = save_config_text_to_drive_oauth(
+            token_file=token_file,
+            name=payload.name,
+            content=payload.content,
+            config_scope=clean_scope,
+        )
     except Exception as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     return {"file_id": saved["file_id"], "name": saved["name"], "status": "saved"}

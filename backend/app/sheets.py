@@ -22,6 +22,10 @@ except ImportError:
 FIXED_DRIVE_ROOT_FOLDER = "UPC"
 FIXED_DRIVE_FAQS_FOLDER = "FAQs"
 FIXED_DRIVE_CONFIGS_FOLDER = "Configuracions"
+CONFIG_SCOPE_FOLDERS = {
+    "scrape": "Descarrega",
+    "genweb": "Genweb",
+}
 FIXED_SPREADSHEET_TITLE = "FAQs"
 FIXED_WORKSHEET_NAME = "FAQs"
 DEFAULT_WORKSHEET_TITLES = {"Sheet1", "Full 1"}
@@ -477,7 +481,12 @@ def _resolve_fixed_faqs_folder(*, creds: OAuthCredentials, create_missing: bool)
     return {"root_folder": root_folder, "faqs_folder": faqs_folder}
 
 
-def _resolve_fixed_configs_folder(*, creds: OAuthCredentials, create_missing: bool) -> dict[str, dict[str, str]]:
+def _resolve_fixed_configs_folder(*, creds: OAuthCredentials, create_missing: bool, config_scope: str = "scrape") -> dict[str, dict[str, str]]:
+    clean_scope = (config_scope or "scrape").strip().lower()
+    scoped_folder_name = CONFIG_SCOPE_FOLDERS.get(clean_scope)
+    if not scoped_folder_name:
+        raise RuntimeError("L'ambit de configuracio no es valid. Usa 'scrape' o 'genweb'.")
+
     folders = _resolve_fixed_faqs_folder(creds=creds, create_missing=create_missing)
     configs_folder = _find_drive_folder(
         creds=creds,
@@ -494,7 +503,29 @@ def _resolve_fixed_configs_folder(*, creds: OAuthCredentials, create_missing: bo
             parent_id=folders["faqs_folder"]["id"],
             name=FIXED_DRIVE_CONFIGS_FOLDER,
         )
-    return {"root_folder": folders["root_folder"], "faqs_folder": folders["faqs_folder"], "configs_folder": configs_folder}
+
+    scoped_folder = _find_drive_folder(
+        creds=creds,
+        parent_id=configs_folder["id"],
+        name=scoped_folder_name,
+    )
+    if scoped_folder is None:
+        if not create_missing:
+            raise RuntimeError(
+                f"No s'ha trobat la carpeta {FIXED_DRIVE_ROOT_FOLDER}/{FIXED_DRIVE_FAQS_FOLDER}/{FIXED_DRIVE_CONFIGS_FOLDER}/{scoped_folder_name}."
+            )
+        scoped_folder = _create_drive_folder(
+            creds=creds,
+            parent_id=configs_folder["id"],
+            name=scoped_folder_name,
+        )
+
+    return {
+        "root_folder": folders["root_folder"],
+        "faqs_folder": folders["faqs_folder"],
+        "configs_folder": configs_folder,
+        "scoped_folder": scoped_folder,
+    }
 
 
 def list_fixed_faqs_spreadsheets_oauth(*, token_file: str = "token.json") -> list[dict[str, str]]:
@@ -504,12 +535,12 @@ def list_fixed_faqs_spreadsheets_oauth(*, token_file: str = "token.json") -> lis
     return [item for item in items if item.get("kind") == "spreadsheet"]
 
 
-def list_fixed_config_files_oauth(*, token_file: str = "token.json") -> list[dict[str, str]]:
+def list_fixed_config_files_oauth(*, token_file: str = "token.json", config_scope: str = "scrape") -> list[dict[str, str]]:
     creds = _get_oauth_credentials(token_file=token_file)
-    folders = _resolve_fixed_configs_folder(creds=creds, create_missing=True)
+    folders = _resolve_fixed_configs_folder(creds=creds, create_missing=True, config_scope=config_scope)
     items = list_drive_items_oauth(
         token_file=token_file,
-        parent_id=folders["configs_folder"]["id"],
+        parent_id=folders["scoped_folder"]["id"],
         include_files=True,
     )
     return [
@@ -552,9 +583,9 @@ def read_drive_text_file_oauth(*, token_file: str = "token.json", file_id: str) 
     }
 
 
-def save_config_text_to_drive_oauth(*, token_file: str = "token.json", name: str, content: str) -> dict[str, str]:
+def save_config_text_to_drive_oauth(*, token_file: str = "token.json", name: str, content: str, config_scope: str = "scrape") -> dict[str, str]:
     creds = _get_oauth_credentials(token_file=token_file)
-    folders = _resolve_fixed_configs_folder(creds=creds, create_missing=True)
+    folders = _resolve_fixed_configs_folder(creds=creds, create_missing=True, config_scope=config_scope)
     clean_name = (name or "").strip()
     if not clean_name:
         raise RuntimeError("Cal indicar un nom de configuracio.")
@@ -563,13 +594,13 @@ def save_config_text_to_drive_oauth(*, token_file: str = "token.json", name: str
 
     existing = _find_drive_file(
         creds=creds,
-        parent_id=folders["configs_folder"]["id"],
+        parent_id=folders["scoped_folder"]["id"],
         name=clean_name,
     )
 
     metadata = {"name": clean_name}
     if existing is None:
-        metadata["parents"] = [folders["configs_folder"]["id"]]
+        metadata["parents"] = [folders["scoped_folder"]["id"]]
 
     boundary = "upcfaqconfigboundary"
     multipart_body = (

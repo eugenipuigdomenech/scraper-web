@@ -14,6 +14,8 @@ const API_BASE = (import.meta.env.VITE_API_URL || defaultApiBase).replace(/\/$/,
 const STORAGE_KEY = 'upc-faq-manager-state-v2'
 const GOOGLE_SESSION_KEY = 'upc-google-session-id'
 const FIXED_DRIVE_PATH = 'El meu Drive / UPC / FAQs'
+const CONFIG_SCOPE_SCRAPE = 'scrape'
+const CONFIG_SCOPE_GENWEB = 'genweb'
 const FIXED_SPREADSHEET_TITLE = 'FAQs'
 const FIXED_WORKSHEET_NAME = 'FAQs'
 const DEFAULT_SHARE_EMAIL = ''
@@ -342,7 +344,8 @@ export default function App() {
   const [googleSession, setGoogleSession] = useState(null)
   const [activityLogs, setActivityLogs] = useState([])
   const [availableFaqSheets, setAvailableFaqSheets] = useState([])
-  const [availableConfigFiles, setAvailableConfigFiles] = useState([])
+  const [availableScrapeConfigFiles, setAvailableScrapeConfigFiles] = useState([])
+  const [availableGenwebConfigFiles, setAvailableGenwebConfigFiles] = useState([])
   const [driveListBusy, setDriveListBusy] = useState(false)
   const [shareBusy, setShareBusy] = useState(false)
   const [, setSaveConfigBusy] = useState(false)
@@ -387,10 +390,13 @@ export default function App() {
   const autosaveTimerRef = useRef(null)
   const autosaveInitializedRef = useRef(false)
   const lastAutosaveKeyRef = useRef('')
+  const genwebUrlEditedRef = useRef(false)
   const sourcesEditedRef = useRef(false)
   const configLoadRequestIdRef = useRef(0)
   const configLoadAbortRef = useRef(null)
   const configLoadInProgressRef = useRef(false)
+  const configGenwebUrlCacheRef = useRef({})
+  const wasOnExportStep3Ref = useRef(false)
   const sheetStepInitializedRef = useRef(false)
 
   const { valid: validSources, invalid: invalidSources } = useMemo(() => extractUniqueSources(sources), [sources])
@@ -426,6 +432,7 @@ export default function App() {
   const canGoNextExportStep = exportStep2Enabled
   const exportStep2NavEnabled = exportStep2Enabled && exportFlowMode === 'manual'
   const exportStep3NavEnabled = exportStep2Enabled && exportFlowMode === 'automatic'
+  const currentConfigScope = activeView === 'export' && exportStep === 3 ? CONFIG_SCOPE_GENWEB : CONFIG_SCOPE_SCRAPE
   const workflowSteps = [
     { id: 1, title: 'Pas 1: Configuració', enabled: true },
     { id: 2, title: 'Pas 2: Fitxer Sheets', enabled: step2Enabled },
@@ -455,8 +462,12 @@ export default function App() {
     [availableFaqSheets, selectedFaqSpreadsheetId],
   )
   const currentConfigFile = useMemo(
-    () => availableConfigFiles.find((item) => item.id === selectedConfigFileId) || null,
-    [availableConfigFiles, selectedConfigFileId],
+    () => (
+      availableScrapeConfigFiles.find((item) => item.id === selectedConfigFileId)
+      || availableGenwebConfigFiles.find((item) => item.id === selectedConfigFileId)
+      || null
+    ),
+    [availableScrapeConfigFiles, availableGenwebConfigFiles, selectedConfigFileId],
   )
   const completedFaqCount = jobResult?.stats?.total_faqs ?? 0
   const loadedConfigTopicsCount = useMemo(
@@ -568,12 +579,12 @@ export default function App() {
     setGoogleSession(sessionData)
   }
 
-  async function loadFaqSheets() {
+  async function loadFaqSheets(configScope = CONFIG_SCOPE_SCRAPE) {
     setDriveListBusy(true)
     try {
       const [faqResponse, configResponse] = await Promise.all([
         apiFetch(`${API_BASE}/api/google/faqs/spreadsheets`),
-        apiFetch(`${API_BASE}/api/google/faqs/configurations`),
+        apiFetch(`${API_BASE}/api/google/faqs/configurations?config_scope=${encodeURIComponent(configScope)}`),
       ])
       const faqData = await faqResponse.json().catch(() => null)
       const configData = await configResponse.json().catch(() => null)
@@ -583,7 +594,11 @@ export default function App() {
       const faqItems = Array.isArray(faqData?.items) ? faqData.items : []
       const configItems = Array.isArray(configData?.items) ? configData.items : []
       setAvailableFaqSheets(faqItems)
-      setAvailableConfigFiles(configItems)
+      if (configScope === CONFIG_SCOPE_GENWEB) {
+        setAvailableGenwebConfigFiles(configItems)
+      } else {
+        setAvailableScrapeConfigFiles(configItems)
+      }
 
       if (!faqItems.length) {
         setSelectedFaqSpreadsheetId('')
@@ -719,6 +734,7 @@ export default function App() {
     setLoadedConfigSummaryFileId('')
     setLoadedConfigStats({ fileId: '', topics: 0, urls: 0 })
     sourcesEditedRef.current = false
+    genwebUrlEditedRef.current = false
     autosaveInitializedRef.current = false
     lastAutosaveKeyRef.current = ''
     setExportMessage('Nova configuracio preparada. Ja pots afegir topics i URLs.')
@@ -730,6 +746,7 @@ export default function App() {
     configLoadRequestIdRef.current = requestId
     configLoadInProgressRef.current = true
     sourcesEditedRef.current = false
+    genwebUrlEditedRef.current = false
     if (configLoadAbortRef.current) {
       configLoadAbortRef.current.abort()
     }
@@ -750,6 +767,8 @@ export default function App() {
     setSelectedConfigFileName(fileName || '')
     setConfigSelectionType('drive')
     setNewConfigFileName('')
+    const cachedGenwebUrl = configGenwebUrlCacheRef.current[cleanFileId]
+    setGenwebUrl(typeof cachedGenwebUrl === 'string' ? cachedGenwebUrl : '')
     setLoadedConfigSummaryFileId('')
     setLoadingConfigFileId(cleanFileId)
 
@@ -764,10 +783,13 @@ export default function App() {
       const parsedConfig = parseConfigCsv(data?.content || '')
       const importedRows = parsedConfig.rows
       applyImportedConfigRows(importedRows, fileName || 'Drive', cleanFileId)
-      setGenwebUrl(parsedConfig.genwebUrl || '')
+      const parsedGenwebUrl = parsedConfig.genwebUrl || ''
+      setGenwebUrl(parsedGenwebUrl)
+      configGenwebUrlCacheRef.current[cleanFileId] = parsedGenwebUrl
       setLoadedConfigSummaryFileId(cleanFileId)
       setLoadingConfigFileId('')
       autosaveInitializedRef.current = false
+      genwebUrlEditedRef.current = false
       lastAutosaveKeyRef.current = ''
     } catch (error) {
       if (abortController.signal.aborted) return
@@ -804,7 +826,8 @@ export default function App() {
   useEffect(() => {
     if (!googleSession?.connected) {
       setAvailableFaqSheets([])
-      setAvailableConfigFiles([])
+      setAvailableScrapeConfigFiles([])
+      setAvailableGenwebConfigFiles([])
       setSelectedConfigFileId('')
       setSelectedConfigFileName('')
       setConfigSelectionType('none')
@@ -819,8 +842,31 @@ export default function App() {
       setLoadingSheetShareId('')
       return
     }
-    loadFaqSheets().catch(() => {})
+    loadFaqSheets(CONFIG_SCOPE_SCRAPE).catch(() => {})
   }, [googleSession?.connected])
+
+  useEffect(() => {
+    if (!isGoogleConnected) return
+    if (activeView === 'scrape') {
+      loadFaqSheets(CONFIG_SCOPE_SCRAPE).catch(() => {})
+    }
+  }, [activeView, isGoogleConnected])
+
+  useEffect(() => {
+    const isOnExportStep3 = activeView === 'export' && exportStep === 3
+    if (isOnExportStep3 && !wasOnExportStep3Ref.current) {
+      setSelectedConfigFileId('')
+      setSelectedConfigFileName('')
+      setConfigSelectionType('none')
+      setNewConfigFileName('')
+      setGenwebUrl('')
+      genwebUrlEditedRef.current = false
+      setLoadedConfigSummaryFileId('')
+      setLoadingConfigFileId('')
+      setLoadedConfigStats({ fileId: '', topics: 0, urls: 0 })
+    }
+    wasOnExportStep3Ref.current = isOnExportStep3
+  }, [activeView, exportStep])
 
   useEffect(() => {
     const cleanSpreadsheetId = (selectedFaqSpreadsheetId || '').trim()
@@ -1143,49 +1189,6 @@ export default function App() {
     return `\uFEFF${rows.join('\r\n')}`
   }
 
-  async function handleStep3LoadConfig() {
-    if (!isGoogleConnected) {
-      setExportMessage('Connecta Google per carregar configuracions de Drive.')
-      return
-    }
-
-    try {
-      const loaded = await loadFaqSheets()
-      const configItems = Array.isArray(loaded?.configItems) ? loaded.configItems : []
-      if (!configItems.length) {
-        setExportMessage('No hi ha cap configuració CSV a Drive (UPC/FAQs/Configuracions).')
-        return
-      }
-
-      const current = configItems.find((item) => item.id === selectedConfigFileId)
-      if (current) {
-        await loadSelectedConfigFile(current.id, current.name)
-        return
-      }
-
-      if (configItems.length === 1) {
-        await loadSelectedConfigFile(configItems[0].id, configItems[0].name)
-        return
-      }
-
-      const options = configItems
-        .slice(0, 20)
-        .map((item, index) => `${index + 1}. ${item.name}`)
-        .join('\n')
-      const rawPick = window.prompt(`Tria configuració (número):\n${options}`)
-      if (!rawPick) return
-      const pick = Number.parseInt(rawPick, 10)
-      if (!Number.isFinite(pick) || pick < 1 || pick > Math.min(configItems.length, 20)) {
-        setExportMessage('Selecció no vàlida.')
-        return
-      }
-      const chosen = configItems[pick - 1]
-      await loadSelectedConfigFile(chosen.id, chosen.name)
-    } catch (error) {
-      setExportMessage(error instanceof Error ? error.message : 'No s’ha pogut carregar la configuració.')
-    }
-  }
-
   function resolveConfigFileName() {
     const stamp = new Date().toISOString().slice(0, 10)
     let baseName = ''
@@ -1210,7 +1213,7 @@ export default function App() {
     setSaveConfigBusy(true)
     if (!silent) setExportMessage('')
     try {
-      const response = await apiFetch(`${API_BASE}/api/google/faqs/configurations`, {
+      const response = await apiFetch(`${API_BASE}/api/google/faqs/configurations?config_scope=${encodeURIComponent(currentConfigScope)}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -1220,12 +1223,30 @@ export default function App() {
       })
       const data = await response.json().catch(() => null)
       if (!response.ok) throw new Error(data?.detail || `HTTP ${response.status}`)
-      setSelectedConfigFileId(data.file_id || '')
-      setSelectedConfigFileName(data.name || suggestedName)
+      const savedFileId = data.file_id || ''
+      const savedFileName = data.name || suggestedName
+      setSelectedConfigFileId(savedFileId)
+      setSelectedConfigFileName(savedFileName)
       if (configSelectionType === 'new') setNewConfigFileName(data.name || suggestedName)
+      const updateConfigItems = (items) => {
+        const next = Array.isArray(items) ? [...items] : []
+        const existingIndex = next.findIndex((item) => item.id === savedFileId)
+        const savedItem = { id: savedFileId, name: savedFileName, kind: 'file' }
+        if (existingIndex >= 0) {
+          next[existingIndex] = { ...next[existingIndex], ...savedItem }
+        } else {
+          next.push(savedItem)
+        }
+        return next
+      }
+      if (currentConfigScope === CONFIG_SCOPE_GENWEB) {
+        setAvailableGenwebConfigFiles((current) => updateConfigItems(current))
+      } else {
+        setAvailableScrapeConfigFiles((current) => updateConfigItems(current))
+      }
       if (!silent) {
         setExportMessage(`Configuracio desada a Drive com ${data.name || suggestedName}.`)
-        await loadFaqSheets()
+        await loadFaqSheets(currentConfigScope)
       }
       return true
     } catch (error) {
@@ -1245,6 +1266,7 @@ export default function App() {
     if (!isGoogleConnected || configSelectionType === 'none') {
       setAutosaveStatus('idle')
       autosaveInitializedRef.current = false
+      genwebUrlEditedRef.current = false
       lastAutosaveKeyRef.current = ''
       return
     }
@@ -1256,10 +1278,15 @@ export default function App() {
     }
 
     if (configLoadInProgressRef.current) return
-    if (!sourcesEditedRef.current) return
-    if (!hasConfigContent(sources)) {
-      setAutosaveStatus('idle')
-      return
+    const isGenwebScope = currentConfigScope === CONFIG_SCOPE_GENWEB
+    if (isGenwebScope) {
+      if (!genwebUrlEditedRef.current) return
+    } else {
+      if (!sourcesEditedRef.current) return
+      if (!hasConfigContent(sources)) {
+        setAutosaveStatus('idle')
+        return
+      }
     }
 
     const autosaveKey = `${fileName}\n${buildConfigCsvText()}`
@@ -1278,7 +1305,11 @@ export default function App() {
       const saved = await saveConfigToDrive({ silent: true })
       if (saved) {
         lastAutosaveKeyRef.current = autosaveKey
-        sourcesEditedRef.current = false
+        if (isGenwebScope) {
+          genwebUrlEditedRef.current = false
+        } else {
+          sourcesEditedRef.current = false
+        }
         setAutosaveStatus('saved')
       } else {
         setAutosaveStatus('error')
@@ -1292,7 +1323,7 @@ export default function App() {
         autosaveTimerRef.current = null
       }
     }
-  }, [isGoogleConnected, configSelectionType, newConfigFileName, currentConfigFile?.name, selectedConfigFileName, sources, genwebUrl])
+  }, [isGoogleConnected, configSelectionType, newConfigFileName, currentConfigFile?.name, selectedConfigFileName, sources, genwebUrl, currentConfigScope])
 
   function addShareRecipient() {
     setShareRecipients((current) => [...current, createShareRecipient('')])
@@ -1504,8 +1535,15 @@ export default function App() {
     setExportFlowMode('automatic')
     setGenwebPublishMessage('')
     setGenwebPublishError('')
+    setSelectedConfigFileId('')
+    setSelectedConfigFileName('')
+    setConfigSelectionType('none')
+    setNewConfigFileName('')
+    setGenwebUrl('')
+    genwebUrlEditedRef.current = false
     if (!exportStep2Enabled) return
     try {
+      await loadFaqSheets(CONFIG_SCOPE_GENWEB)
       await generateHtmlFromExternalSource({ silentSuccess: true })
       setExportMessage('Codi HTML generat automàticament. Ara pots publicar-lo a Genweb.')
       setExportStep(3)
@@ -1831,29 +1869,31 @@ export default function App() {
                                     <span>Carrega una configuració</span>
                                     <span className="inline-help">
                                       <span className="inline-help-trigger" aria-hidden="true">?</span>
-                                      <span className="inline-help-popover">Es guarden i es carreguen des de: El meu Drive &gt; UPC &gt; FAQs &gt; Configuracions.</span>
+                                      <span className="inline-help-popover">Es guarden i es carreguen des de: El meu Drive &gt; UPC &gt; FAQs &gt; Configuracions &gt; Descarrega.</span>
                                     </span>
                                   </span>
                                   <select
                                     value={configPickerValue}
-                                    onChange={(event) => {
-                                      const nextId = event.target.value
-                                      if (!nextId) {
-                                        setSelectedConfigFileId('')
-                                        setSelectedConfigFileName('')
-                                        setConfigSelectionType('none')
-                                        setNewConfigFileName('')
-                                        setLoadedConfigSummaryFileId('')
-                                        setLoadingConfigFileId('')
-                                        setLoadedConfigStats({ fileId: '', topics: 0, urls: 0 })
-                                        return
-                                      }
+                                  onChange={(event) => {
+                                    const nextId = event.target.value
+                                    if (!nextId) {
+                                      setSelectedConfigFileId('')
+                                      setSelectedConfigFileName('')
+                                      setConfigSelectionType('none')
+                                      setNewConfigFileName('')
+                                      setGenwebUrl('')
+                                      genwebUrlEditedRef.current = false
+                                      setLoadedConfigSummaryFileId('')
+                                      setLoadingConfigFileId('')
+                                      setLoadedConfigStats({ fileId: '', topics: 0, urls: 0 })
+                                      return
+                                    }
                                       if (nextId === '__NEW__') {
                                         createNewConfiguration()
                                         return
                                       }
 
-                                      const nextConfig = availableConfigFiles.find((item) => item.id === nextId)
+                                      const nextConfig = availableScrapeConfigFiles.find((item) => item.id === nextId)
                                       if (!nextConfig) return
                                       loadSelectedConfigFile(nextId, nextConfig.name).catch(() => {})
                                     }}
@@ -1861,7 +1901,7 @@ export default function App() {
                                   >
                                     <option value="">Selecciona una configuració</option>
                                     <option value="__NEW__">Nova configuració</option>
-                                    {availableConfigFiles.map((item) => (
+                                    {availableScrapeConfigFiles.map((item) => (
                                       <option key={item.id} value={item.id}>{formatConfigDisplayName(item.name)}</option>
                                     ))}
                                   </select>
@@ -2387,31 +2427,85 @@ export default function App() {
 
                   {exportStep === 3 && (
                     <div className="export-code-inline">
-                      <div className="config-picker-row export-step3-config-actions">
-                        <button
-                          type="button"
-                          className="secondary"
-                          onClick={() => { handleStep3LoadConfig().catch(() => {}) }}
-                          disabled={!isGoogleConnected}
-                        >
-                          Carrega
-                        </button>
-                        <button
-                          type="button"
-                          className="secondary"
-                          onClick={() => { saveConfigToDrive({ silent: false }).catch(() => {}) }}
-                          disabled={!isGoogleConnected}
-                        >
-                          Desa
-                        </button>
-                      </div>
+                      <label className="field drive-select-field config-drive-field">
+                        <div className="field-inline config-inline-row">
+                          <span className="field-with-help config-picker-label">
+                            <span>Selector de configuració</span>
+                            <span className="inline-help">
+                              <span className="inline-help-trigger" aria-hidden="true">?</span>
+                              <span className="inline-help-popover">Es guarden i es carreguen des de: El meu Drive &gt; UPC &gt; FAQs &gt; Configuracions &gt; Genweb.</span>
+                            </span>
+                          </span>
+                          <div className="config-select-autosave-inline">
+                            <select
+                              value={configPickerValue}
+                              onChange={(event) => {
+                                const nextId = event.target.value
+                                if (!nextId) {
+                                  setSelectedConfigFileId('')
+                                  setSelectedConfigFileName('')
+                                  setConfigSelectionType('none')
+                                  setNewConfigFileName('')
+                                  setGenwebUrl('')
+                                  genwebUrlEditedRef.current = false
+                                  setLoadedConfigSummaryFileId('')
+                                  setLoadingConfigFileId('')
+                                  setLoadedConfigStats({ fileId: '', topics: 0, urls: 0 })
+                                  return
+                                }
+                                if (nextId === '__NEW__') {
+                                  createNewConfiguration()
+                                  return
+                                }
+
+                                const nextConfig = availableGenwebConfigFiles.find((item) => item.id === nextId)
+                                if (!nextConfig) return
+                                loadSelectedConfigFile(nextId, nextConfig.name).catch(() => {})
+                              }}
+                              disabled={!isGoogleConnected}
+                            >
+                              <option value="">Selecciona una configuració</option>
+                              <option value="__NEW__">Nova configuració</option>
+                              {availableGenwebConfigFiles.map((item) => (
+                                <option key={item.id} value={item.id}>{formatConfigDisplayName(item.name)}</option>
+                              ))}
+                            </select>
+                            {configSelectionType !== 'none' && (
+                              <span className={`autosave-pill ${autosaveStatus}`}>
+                                {autosaveStatus === 'saving'
+                                  ? 'Autosave: guardant...'
+                                  : (autosaveStatus === 'error' ? 'Autosave: error' : 'Autosave: desat')}
+                              </span>
+                            )}
+                          </div>
+                        </div>
+                      </label>
+                      {configSelectionType === 'new' && (
+                        <label className="field drive-select-field config-drive-field">
+                          <div className="field-inline config-inline-row">
+                            <span className="field-with-help config-picker-label">
+                              <span>Nom de la nova configuració</span>
+                            </span>
+                            <div className="config-select-autosave-inline">
+                              <input
+                                className="config-new-name-input"
+                                type="text"
+                                value={newConfigFileName}
+                                onChange={(event) => setNewConfigFileName(event.target.value)}
+                                placeholder=""
+                                disabled={!isGoogleConnected}
+                              />
+                            </div>
+                          </div>
+                        </label>
+                      )}
                       <label className="field field-inline">
                         <span>URL de la pàgina FAQ</span>
                         <input
                           type="url"
                           value={genwebUrl}
                           onChange={(event) => {
-                            sourcesEditedRef.current = true
+                            genwebUrlEditedRef.current = true
                             setGenwebUrl(event.target.value)
                           }}
                         />
