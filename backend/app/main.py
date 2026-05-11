@@ -5,7 +5,6 @@ import io
 import os
 import secrets
 import tempfile
-import threading
 import time
 from urllib.parse import urlparse, urlunparse
 from pathlib import Path
@@ -178,9 +177,8 @@ app.add_middleware(
 
 GOOGLE_OAUTH_CALLBACK_PATH = "/api/google/callback"
 GOOGLE_OAUTH_STATE_TTL_SECONDS = 900
-pending_google_oauth_states: dict[str, dict[str, str | float]] = {}
-pending_google_oauth_lock = threading.Lock()
 GOOGLE_SESSION_HEADER = "x-google-session-id"
+GOOGLE_OAUTH_SESSION_KEY = "pending_google_oauth_states"
 
 
 def _frontend_base_url(request: Request) -> str:
@@ -220,30 +218,44 @@ def _session_token_file(request: Request) -> str:
     return f"google_tokens/{session_id}.json"
 
 
-def _store_pending_google_oauth_state(state: str, session_id: str, oauth_client_json: str, code_verifier: str) -> None:
+def _store_pending_google_oauth_state(
+    request: Request,
+    state: str,
+    session_id: str,
+    oauth_client_json: str,
+    code_verifier: str,
+) -> None:
     now = time.time()
-    with pending_google_oauth_lock:
-        expired = [
-            key
-            for key, payload in pending_google_oauth_states.items()
-            if now - float(payload.get("created_at", 0)) > GOOGLE_OAUTH_STATE_TTL_SECONDS
-        ]
-        for key in expired:
-            pending_google_oauth_states.pop(key, None)
+    pending_states = request.session.get(GOOGLE_OAUTH_SESSION_KEY) or {}
+    if not isinstance(pending_states, dict):
+        pending_states = {}
 
-        pending_google_oauth_states[state] = {
-            "session_id": session_id,
-            "oauth_client_json": oauth_client_json,
-            "code_verifier": code_verifier,
-            "created_at": now,
-        }
+    cleaned_states: dict[str, dict[str, str | float]] = {}
+    for key, payload in pending_states.items():
+        if not isinstance(payload, dict):
+            continue
+        created_at = float(payload.get("created_at", 0))
+        if now - created_at <= GOOGLE_OAUTH_STATE_TTL_SECONDS:
+            cleaned_states[str(key)] = payload
+
+    cleaned_states[state] = {
+        "session_id": session_id,
+        "oauth_client_json": oauth_client_json,
+        "code_verifier": code_verifier,
+        "created_at": now,
+    }
+    request.session[GOOGLE_OAUTH_SESSION_KEY] = cleaned_states
 
 
-def _consume_pending_google_oauth_state(state: str | None) -> dict[str, str | float] | None:
+def _consume_pending_google_oauth_state(request: Request, state: str | None) -> dict[str, str | float] | None:
     if not state:
         return None
-    with pending_google_oauth_lock:
-        payload = pending_google_oauth_states.pop(state, None)
+    pending_states = request.session.get(GOOGLE_OAUTH_SESSION_KEY) or {}
+    if not isinstance(pending_states, dict):
+        pending_states = {}
+
+    payload = pending_states.pop(state, None)
+    request.session[GOOGLE_OAUTH_SESSION_KEY] = pending_states
     if not payload:
         return None
     if time.time() - float(payload.get("created_at", 0)) > GOOGLE_OAUTH_STATE_TTL_SECONDS:
@@ -402,7 +414,7 @@ def google_connect(request: Request, oauth_client_json: str = Form(default="oaut
     callback_url = _google_callback_url(request)
     state = secrets.token_urlsafe(24)
     code_verifier = secrets.token_urlsafe(72)
-    _store_pending_google_oauth_state(state, session_id, oauth_client_json, code_verifier)
+    _store_pending_google_oauth_state(request, state, session_id, oauth_client_json, code_verifier)
 
     try:
         authorization_url = create_google_authorization_url(
@@ -422,7 +434,7 @@ def google_callback(request: Request, code: str | None = None, state: str | None
     if error:
         return _google_popup_response("error", error)
 
-    pending_state = _consume_pending_google_oauth_state(state)
+    pending_state = _consume_pending_google_oauth_state(request, state)
     if not code or not pending_state:
         return _google_popup_response("error", "oauth_state_invalid")
 
