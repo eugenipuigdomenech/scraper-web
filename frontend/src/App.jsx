@@ -185,6 +185,7 @@ function parseConfigCsv(text) {
   const topicIndex = header.findIndex((value) => ['topic', 'tema'].includes(value))
   const urlIndex = header.findIndex((value) => ['url', 'link', 'enllac'].includes(value))
   const enabledIndex = header.findIndex((value) => ['enabled', 'actiu', 'activa'].includes(value))
+  const groupIdIndex = header.findIndex((value) => ['group_id', 'group id', 'topic_id', 'topic id', 'id_grup', 'id grup'].includes(value))
   const genwebUrlIndex = header.findIndex((value) => ['genweb_url', 'genweb url', 'web_url', 'web url', 'pagina_web', 'pagina web'].includes(value))
   const hasHeader = topicIndex !== -1 && urlIndex !== -1
 
@@ -195,6 +196,7 @@ function parseConfigCsv(text) {
     let parsedGenwebUrl = ''
     const parsedWithHeader = rows
       .map((cells) => ({
+        groupId: groupIdIndex === -1 ? '' : (cells[groupIdIndex] || '').trim(),
         topic: (cells[topicIndex] || '').trim(),
         url: (cells[urlIndex] || '').trim(),
         enabled: enabledIndex === -1
@@ -227,9 +229,9 @@ function parseConfigCsv(text) {
       const firstIsUrl = /^https?:\/\//i.test(first)
       const secondIsUrl = /^https?:\/\//i.test(second)
       if (firstIsUrl && !secondIsUrl) {
-        return { topic: second, url: first, enabled: true }
+        return { groupId: '', topic: second, url: first, enabled: true }
       }
-      return { topic: first, url: second, enabled: true }
+      return { groupId: '', topic: first, url: second, enabled: true }
     })
     .filter((row) => row.topic !== '' || row.url !== '')
   return {
@@ -689,8 +691,8 @@ export default function App() {
     }
 
     const groupedSources = new Map()
-    importedRows.forEach(({ topic, url, enabled }) => {
-      const key = topic || '__EMPTY_TOPIC__'
+    importedRows.forEach(({ groupId, topic, url, enabled }, index) => {
+      const key = groupId || `legacy-row:${index}`
       const currentGroup = groupedSources.get(key) || {
         id: createId(),
         topic,
@@ -1166,13 +1168,14 @@ export default function App() {
   }
 
   function buildConfigCsvText() {
-    const rows = ['topic;url;enabled;genweb_url']
+    const rows = ['group_id;topic;url;enabled;genweb_url']
     const normalizedGenwebUrl = genwebUrl.trim()
 
     sources.forEach((group) => {
       group.urls.forEach((url) => {
         rows.push(
           [
+            escapeCsvCell(group.id),
             escapeCsvCell(group.topic.trim()),
             escapeCsvCell(url.value.trim()),
             escapeCsvCell(url.enabled === false ? 'false' : 'true'),
@@ -1183,7 +1186,7 @@ export default function App() {
     })
 
     if (!sources.length) {
-      rows.push(`;;;${escapeCsvCell(normalizedGenwebUrl)}`)
+      rows.push(`;;;;${escapeCsvCell(normalizedGenwebUrl)}`)
     }
 
     return `\uFEFF${rows.join('\r\n')}`

@@ -397,16 +397,18 @@ La URI de callback per defecte és:
 
 El frontend pot importar i exportar un CSV de configuració amb aquestes columnes:
 
-`topic;url;enabled`
+`group_id;topic;url;enabled;genweb_url`
 
 Exemple:
 
 ```csv
-topic;url;enabled
-Admissions;https://exemple.upc.edu/faqs-admissions;true
-Admissions;https://exemple.upc.edu/faqs-matricula;true
-Masters;https://exemple.upc.edu/faqs-masters;false
+group_id;topic;url;enabled;genweb_url
+topic-1;Admissions;https://exemple.upc.edu/faqs-admissions;true;
+topic-1;Admissions;https://exemple.upc.edu/faqs-matricula;true;
+topic-2;Masters;https://exemple.upc.edu/faqs-masters;false;
 ```
+
+La columna `group_id` permet conservar topics diferents encara que tinguin el mateix nom. Els CSV antics amb `topic;url;enabled` continuen sent compatibles.
 
 ## Format de dades per al full de revisió
 
