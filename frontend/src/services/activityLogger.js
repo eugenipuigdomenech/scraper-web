@@ -5,7 +5,7 @@ const ACTIVITY_API_URL = (
 ).trim()
 const DEBUG_LOGGER = import.meta.env.DEV || (import.meta.env.VITE_ACTIVITY_LOGGER_DEBUG === '1')
 const GOOGLE_SESSION_KEY = 'upc-google-session-id'
-let visitSentForCurrentPage = false
+const sentVisitKeys = new Set()
 const SESSION_ID_KEY = 'scraper-web-session-id'
 const SESSION_START_TS_KEY = 'scraper-web-session-start-ts'
 const CLICK_COUNT_KEY = 'scraper-web-click-count'
@@ -178,12 +178,6 @@ export function setupActivityTracking() {
   ensureSessionStartTimestamp()
   if (!window.sessionStorage.getItem(CLICK_COUNT_KEY)) setSessionClickCount(0)
 
-  // React StrictMode in dev mounts components twice; guard to avoid duplicate visit rows.
-  if (!visitSentForCurrentPage) {
-    visitSentForCurrentPage = true
-    void postPayload(getBasePayload('visit'))
-  }
-
   const cleanupClickCounter = registerClickCounter()
   const cleanupLeaveTracking = registerLeaveTracking()
 
@@ -191,4 +185,26 @@ export function setupActivityTracking() {
     cleanupClickCounter()
     cleanupLeaveTracking()
   }
+}
+
+export function logAuthenticatedVisit(userKey = '') {
+  if (!ACTIVITY_API_URL) {
+    if (DEBUG_LOGGER) console.warn('[activityLogger] disabled: activity API URL is empty')
+    return
+  }
+
+  const normalizedUserKey = `${userKey || 'google-user'}`.trim() || 'google-user'
+  const visitKey = [
+    ensureSessionId(),
+    window.location.pathname,
+    normalizedUserKey,
+  ].join('|')
+
+  // React StrictMode and repeated session refreshes can run this more than once.
+  if (sentVisitKeys.has(visitKey)) return
+  sentVisitKeys.add(visitKey)
+
+  ensureSessionStartTimestamp()
+  if (!window.sessionStorage.getItem(CLICK_COUNT_KEY)) setSessionClickCount(0)
+  void postPayload(getBasePayload('visit'))
 }

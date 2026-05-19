@@ -7,7 +7,7 @@ import faqsLogo from './assets/faqs1_logo.png'
 import googleLogo from './assets/Google_logo.png'
 import downloadIcon from './assets/download.png'
 import uploadIcon from './assets/upload.png'
-import { setupActivityTracking } from './services/activityLogger'
+import { logAuthenticatedVisit, setupActivityTracking } from './services/activityLogger'
 
 const defaultApiBase = `${window.location.protocol}//${window.location.hostname}:8000`
 const API_BASE = (import.meta.env.VITE_API_URL || defaultApiBase).replace(/\/$/, '')
@@ -518,6 +518,16 @@ export default function App() {
     const cleanupTracking = setupActivityTracking()
     return cleanupTracking
   }, [])
+
+  useEffect(() => {
+    if (!googleSession?.connected) return
+    logAuthenticatedVisit(googleSession.profile_email || googleSession.profile_name || googleSession.account_hint || '')
+  }, [
+    googleSession?.connected,
+    googleSession?.profile_email,
+    googleSession?.profile_name,
+    googleSession?.account_hint,
+  ])
 
   useEffect(() => {
     try {
